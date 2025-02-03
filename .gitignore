@@ -1,2 +1,3 @@
 # Visual SourceSafe
 *.scc
+.DS_Store

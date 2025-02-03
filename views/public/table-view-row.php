@@ -6,14 +6,14 @@ $columnData = $searchResults->getColumnsData();
 $layoutData = $searchResults->getLayoutsData();
 
 echo '<div class="table-row-start">';
-echo '<div class="item-linked-details">';
+echo '<div class="item-linked-details L2">';
 // Emit the columns for this row's data.
 foreach ($columnData as $elementId => $column)
 {
     $columnName = $column['name'];
 
     // Form the special class name e.g. 'search-td-title' that is unique to this row column.
-    $columnClass = SearchResultsView::createColumnClass($columnName, 'td');
+    $columnClass = SearchResultsView::createColumnClass($columnName, 'div');
 
     // Get this row's column text.
     $text = $data->elementValue[$columnName]['text'];
@@ -23,8 +23,16 @@ foreach ($columnData as $elementId => $column)
 
     if (!empty(($classes)))
     {
-        $columnHtml = "<td class=\"search-result $columnClass $classes\">$text</td>";
+        $columnHtml = "<div class=\"search-result $columnClass $classes\">";
         echo $columnHtml;
+        if ($columnClass == 'search-div-type') {
+           echo '<span class="type-label">Type: </span>';
+        }
+        if ($columnClass == 'search-div-subject') {
+           echo '<span class="subject-label">Subjects: </span>';
+        }
+        echo $text;
+        echo '</div>';
     }
 }
 echo '</div>';

@@ -9,7 +9,7 @@ $headerColumns = array();
 if ($searchResults->hasLayoutL1())
 {
     // Set the Image column which only appears in the L1 Detail layout.
-    $headerColumns['<image>'] = array('label' => 'Image', 'classes' => 'L1', 'sortable' => false);
+    $headerColumns['<image>'] = array('label' => '', 'classes' => 'L1', 'sortable' => false);
 }
 
 foreach ($columnsData as $elementId => $column)
