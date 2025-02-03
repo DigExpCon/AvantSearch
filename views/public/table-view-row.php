@@ -25,6 +25,9 @@ foreach ($columnData as $elementId => $column)
     {
         $columnHtml = "<div class=\"search-result $columnClass $classes\">";
         echo $columnHtml;
+        if ($columnClass == 'search-div-identifier') {
+           echo '<span class="type-label">ID: </span>';
+        }
         if ($columnClass == 'search-div-type') {
            echo '<span class="type-label">Type: </span>';
         }
