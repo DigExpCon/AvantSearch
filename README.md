@@ -1,6 +1,6 @@
 # AvantSearch
 
-This for removes the use of tables for layout of the search results and includes some other 
+This fork removes the use of tables for layout of the search results and includes some other 
 smaller fixes. Original documentation for this plugin is located at <https://digitalarchive.us/plugins/avantsearch>.
 
 ## Warning
