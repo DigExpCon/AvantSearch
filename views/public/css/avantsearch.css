@@ -1194,6 +1194,13 @@ input[type="checkbox"] {
 #search-table-view .table-row-start {
   display: block;
 }
+#search-table-view .item-img {
+  display: block !important;
+  float: none;
+  clear: both;
+  margin-bottom: 15px;
+  height: auto;
+}
 .search-filter-bar-layout {
   height: auto;
 }
