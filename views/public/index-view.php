@@ -1,131 +1,9 @@
 <?php
 /* @var $searchResults SearchResultsIndexView */
 
-function createEntriesFromElasticsearchResults($results, $indexFieldName, $sharedSearchingEnabled)
-{
-    $entries = array();
-    $resultValues = array();
-
-    $requireCommonVocabulary = $sharedSearchingEnabled && plugin_is_active('AvantVocabulary');
-    $commonTerms = null;
-
-    // Determine if index terms must be limited to those in the common vocabulary. This will be
-    // true when sharing is enabled and the index field is one of the common vocabulary fields.
-    if ($requireCommonVocabulary)
-    {
-        $kindName = ucfirst($indexFieldName);
-        $vocabularyFields = AvantVocabulary::getVocabularyFields();
-        if (array_key_exists($kindName, $vocabularyFields))
-        {
-            $kind = $vocabularyFields[$kindName];
-            $commonTerms = get_db()->getTable('VocabularyCommonTerms')->getAllCommonTermsForKind($kind);
-        }
-        else
-        {
-            $requireCommonVocabulary = false;
-        }
-    }
-
-    foreach ($results as $result)
-    {
-        // Get the index field texts for this result.
-        $source = $result['_source'];
-        if (isset($source['core-fields'][$indexFieldName]))
-        {
-            $fieldTexts = $source['core-fields'][$indexFieldName];
-            if ($requireCommonVocabulary)
-            {
-                foreach ($fieldTexts as $index => $fieldText)
-                {
-                    // Determine if this text is in the common vocabulary. If not, omit it from the index.
-                    if (!in_array($fieldText, $commonTerms))
-                         unset($fieldTexts[$index]);
-                }
-            }
-        }
-        else
-        {
-            if (isset($source['local-fields'][$indexFieldName]))
-                $fieldTexts = $source['local-fields'][$indexFieldName];
-            else if (isset($source['private-fields'][$indexFieldName]))
-                $fieldTexts = $source['private-fields'][$indexFieldName];
-            else
-                $fieldTexts = [BLANK_FIELD_SUBSTITUTE];
-        }
-
-        // Create an entry for each text. For example if the index is Creator, and the result has multiple creators,
-        // each creator text will have a separate entry in the index view.
-        foreach ($fieldTexts as $fieldText)
-        {
-            // Decide whether to index blank fields. It's hardcoded for now, but could be a configuration option.
-            $dontIndexBlankFields = false;
-            if ($fieldText == BLANK_FIELD_SUBSTITUTE && $dontIndexBlankFields)
-                continue;
-
-            // For sorting purposes, remove all non alphanumeric and blank characters.
-            $cleanText = preg_replace('/[^a-z\d ]/i', '', $fieldText);
-
-            $value = array(
-                'text'=> $fieldText,
-                'clean-text' => strtolower($cleanText),
-                'url' => $source['url']['item'],
-                'count' => 1);
-
-            if (isset($resultValues[$fieldText]))
-            {
-                // This text is already been seen. Bump its count.
-                $resultValues[$fieldText]['count'] += 1;
-            }
-            else
-            {
-                $resultValues[$fieldText] = $value;
-            }
-        }
-    }
-
-    usort($resultValues, 'entryTextComparator');
-
-    foreach ($resultValues as $resultValue)
-    {
-        $fieldText = $resultValue['text'];
-        $entries[$fieldText]['count'] = $resultValue['count'];
-        $entries[$fieldText]['url'] = $resultValue['url'];
-    }
-
-    return $entries;
-}
-
-function createEntriesFromSqlResults($results)
-{
-    $entries = array();
-
-    foreach ($results as $result)
-    {
-        $fieldText = $result['text'];
-        $count = $result['count'];
-
-        if (isset($entries[$fieldText]))
-        {
-            $count += $entries[$fieldText]['count'];
-        }
-
-        $entries[$fieldText]['count'] = $count;
-        $entries[$fieldText]['id'] = $result['id'];
-    }
-
-    return $entries;
-}
-
-function emitEntries($entries, $indexFieldElementId, $indexElementName, $searchResults)
+function emitEntries($entries, $indexFieldElementId, $searchResults)
 {
     $currentHeading = '';
-
-    if (empty($entries))
-    {
-        $noEntriesMessage = __('No entries are indexed by %s', $indexElementName);
-        echo "<h3>$noEntriesMessage</h3>";
-    }
-
     foreach ($entries as $entryText => $entry)
     {
         if (empty($entryText))
@@ -133,9 +11,9 @@ function emitEntries($entries, $indexFieldElementId, $indexElementName, $searchR
             continue;
         }
 
-        // Get the entry's first letter. If it's a quote, use the second letter instead.
+        // Get the entry's first letter. If it's a double quote, use the second letter instead.
         $firstLetter = substr($entryText, 0, 1);
-        if (($firstLetter == '"' || $firstLetter == '\'') && strlen($entryText) > 1)
+        if ($firstLetter == '"' && strlen($entryText) > 1)
         {
             $firstLetter = substr($entryText, 1, 1);
         }
@@ -159,33 +37,25 @@ function emitEntries($entries, $indexFieldElementId, $indexElementName, $searchR
         if ($count === 1)
         {
             // Emit a link directly to the item's show page.
-            if ($searchResults->useElasticsearch())
-            {
-                $url = $entry['url'];
-                $link = "<a href='$url' target='_blank'>$entryText</a>";
-            }
-            else
-            {
-                $item = get_record_by_id('Item', $entry['id']);
-                $link = link_to($item, null, $entryText);
-            }
-            echo $link;
+            $item = get_record_by_id('Item', $entry['id']);
+            echo link_to($item, null, $entryText);
         }
         else
         {
             // Emit a link to produce search results showing all items for this entry.
-            if (empty($indexFieldElementId) && empty($indexElementName))
+            if ($indexFieldElementId != 0)
             {
-                // This case would only be true if someone hand-edited the query emitted by the advanced search page.
-                echo "$entryText";
+                // If the index element is for hierarchical data, set the search condition to be only for the leaf
+                // (ends with) otherwise set the search for the exact string. The data is hierarchical if the element
+                // is also configured for use as a Tree View field.
+                $searchCondition = $entry['hierarchy'] ? 'ends with' : 'is exactly';
+                $url = $searchResults->emitIndexEntryUrl($entryText, $indexFieldElementId, $searchCondition);
+                echo "<a href=\"$url\">$entryText</a>";
             }
             else
             {
-                if (empty($indexElementName) || !$searchResults->useElasticsearch())
-                    $indexElementName = $indexFieldElementId;
-                $searchCondition = 'is exactly';
-                $url = $searchResults->emitIndexEntryUrl($entryText, $indexElementName, $searchCondition);
-                echo "<a href='$url' target='_blank'>$entryText</a>";
+                // This case would only be true if someone hand-edited the query emitted by the advanced search page.
+                echo "$entryText";
             }
             if ($count)
             {
@@ -248,79 +118,53 @@ function emitLetterIndex($entries)
     return $letterIndex;
 }
 
-function entryTextComparator($object1, $object2)
+function flattenResults($results, $indexFieldElementId)
 {
-    $s1 = $object1['clean-text'];
-    $s2 = $object2['clean-text'];
-    if ($s1 == $s2)
-        return 0;
-    return $s1 > $s2 ? 1 : - 1;
+    // Combine results into unique entries. This is necessary because some results can have the same
+    // leaf value, but a different ancestry. This can be due to a data entry error, or an obscure case
+    // e.g. 'Schoodic, Acadia National Park' and "MDI, Acadia National Park'. Create a unique entry
+    // with a count representing the total of all the results with the same leaf text.
+
+    $displayHierarchyElementLeaf = SearchConfig::isHierarchyElementThatDisplaysAs($indexFieldElementId, 'leaf');
+
+    $entries = array();
+    foreach ($results as $result)
+    {
+        // For hierarchy elements that display only their leaf values, get the leaf text from the pseudo column text_exp
+        // emitted by the SQL query for index views.
+        $text = $displayHierarchyElementLeaf ? $result['text_exp'] : $result['text'];
+
+        $count = $result['count'];
+
+        if (isset($entries[$text]))
+        {
+            $count += $entries[$text]['count'];
+        }
+        $entries[$text]['count'] = $count;
+        $entries[$text]['id'] = $result['id'];
+        $entries[$text]['hierarchy'] = $displayHierarchyElementLeaf;
+    }
+    return $entries;
 }
 
-$useElasticsearch = $searchResults->useElasticsearch();
 $results = $searchResults->getResults();
-$totalResults = $searchResults->getTotalResults();
+$totalResults = count($results);
+$indexFieldElementId = $searchResults->getIndexFieldElementId();
+$showLetterIndex = $totalResults > 50;
+$element = get_db()->getTable('Element')->find($indexFieldElementId);
+$indexFieldName = empty($element) ? '' : $element['name'];
+$pageTitle = __('Search Results');
 
-if ($totalResults <= AvantSearch::MAX_SEARCH_RESULTS || !$useElasticsearch)
-{
-    $resultsMessage = SearchResultsView::getSearchResultsMessage($totalResults, $searchResults->getResultsAreFuzzy());
-}
-else
-{
-    $max = number_format(AvantSearch::MAX_SEARCH_RESULTS);
-    $resultsMessage = __('Your search exceeds the limit of ' . $max . ' results. Refine your search at left, or use more keywords.');
-}
+echo head(array('title' => $pageTitle));
+echo "<div class='search-results-container'>";
+echo "<div class='search-results-title'>$pageTitle</div>";
 
-$showLetterIndex = $totalResults > 1000;
-
-if ($useElasticsearch)
-{
-    $indexElementName = $searchResults->getSelectedIndexElementName();
-    $indexFieldName = (new AvantElasticsearch())->convertElementNameToElasticsearchFieldName($indexElementName);
-}
-else
-{
-    $indexFieldElementId = $searchResults->getIndexFieldElementId();
-    $element = get_db()->getTable('Element')->find($indexFieldElementId);
-    $indexElementName = empty($element) ? '' : $element['name'];
-}
-
-$indexId = $searchResults->getSelectedIndexId();
-$siteId = $searchResults->getSelectedSiteId();
-$viewId = $searchResults->getSelectedViewId();
-
-// Selectors are displayed left to right in the order listed here.
-$optionSelectorsHtml = $searchResults->emitSelectorForSite();
-$optionSelectorsHtml .= $searchResults->emitSelectorForView();
-$optionSelectorsHtml .= $searchResults->emitSelectorForIndex();
-
-echo head(array('title' => $resultsMessage));
-echo "<div id='{$searchResults->getSearchResultsContainerName()}'>";
-echo "<div id='search-results-title'>$resultsMessage</div>";
-
-echo $searchResults->emitSearchFilters($optionSelectorsHtml, $totalResults > 0);
+echo $searchResults->emitModifySearchButton();
+echo $searchResults->emitSearchFilters(__('Index View by %s', $indexFieldName), $totalResults ? pagination_links() : '', false);
 
 if ($totalResults)
 {
-    if ($useElasticsearch)
-    {
-        $query = $searchResults->getQuery();
-        $facets = $searchResults->getFacets();
-        echo $this->partial('/elasticsearch-facets.php', array(
-                'query' => $query,
-                'aggregations' => $facets,
-                'totalResults' => $totalResults
-            )
-        );
-        echo '<section id="elasticsearch-results">';
-
-        $entries = createEntriesFromElasticsearchResults($results, $indexFieldName, $searchResults->sharedSearchingEnabled());
-    }
-    else
-    {
-        $entries = createEntriesFromSqlResults($results);
-    }
-
+    $entries = flattenResults($results, $indexFieldElementId);
 
     if ($showLetterIndex)
     {
@@ -328,7 +172,7 @@ if ($totalResults)
     }
 
     echo '<div id="search-index-view-headings">';
-    emitEntries($entries, $indexId, $indexElementName, $searchResults);
+    emitEntries($entries, $indexFieldElementId, $searchResults);
     echo "</div>";
 
     if ($showLetterIndex)
@@ -339,30 +183,13 @@ if ($totalResults)
     }
 
     echo '</div>';
-    if ($useElasticsearch)
-    {
-        echo '</section>';
-    }
 }
 else
 {
     echo '<div id="no-results">';
-    echo ' <p>';
-    $error = $searchResults->getError();
-    if (!empty($error))
-        echo $error;
-    echo '</p>';
+    echo '<p>' . __('Your search returned no results.') . '</p>';
+    echo '</div>';
     echo '</div>';
 }
-echo $this->partial('/results-view-script.php',
-    array(
-        'filterId' => 0,
-        'indexId' => $indexId,
-        'layoutId' => 0,
-        'limitId' => 0,
-        'siteId' => $siteId,
-        'sortId' => 0,
-        'viewId' => $viewId)
-);
 echo foot();
 ?>

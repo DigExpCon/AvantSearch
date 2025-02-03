@@ -4,7 +4,7 @@ $view = get_view();
 $storageEngine = AvantSearch::getStorageEngineForSearchTextsTable();
 $titlesOnlySupported = SearchConfig::getOptionsSupportedTitlesOnly();
 $addressSortingSupported = SearchConfig::getOptionSupportedAddressSorting();
-$elasticsearchSupported = SearchConfig::getOptionSupportedElasticsearch();
+$relationshipsViewSupported = SearchConfig::getOptionSupportedRelationshipsView();
 
 $columnsOption = SearchConfig::getOptionTextForColumns();
 $columnsOptionRows = max(2, count(explode(PHP_EOL, $columnsOption)));
@@ -12,19 +12,21 @@ $columnsOptionRows = max(2, count(explode(PHP_EOL, $columnsOption)));
 $layoutsOption = SearchConfig::getOptionTextForLayouts();
 $layoutsOptionRows = max(2, count(explode(PHP_EOL, $layoutsOption)));
 
+$layoutSelectorWidth = SearchConfig::getOptionTextForLayoutSelectorWidth();
+
 $detailLayoutOption = SearchConfig::getOptionTextForDetailLayout();
-$detailLayoutRows = max(2, count(explode(PHP_EOL, $detailLayoutOption)));
+
+$indexViewOption = SearchConfig::getOptionTextForIndexView();
+$indexViewOptionRows = max(2, count(explode(PHP_EOL, $indexViewOption)));
+
+$treeViewOption = SearchConfig::getOptionTextForTreeView();
+$treeViewOptionRows = max(2, count(explode(PHP_EOL, $treeViewOption)) - 1);
+
+$hierarchiesOption = SearchConfig::getOptionTextForHierarchies();
+$hierarchiesOptionRows = max(2, count(explode(PHP_EOL, $hierarchiesOption)));
 
 $integerSortingOption = SearchConfig::getOptionTextForIntegerSorting();
 $integerSortingOptionRows = max(2, count(explode(PHP_EOL, $integerSortingOption)));
-
-$pdfOptionAttributes = array('checked' => AvantSearch::usePdfSearch());
-if (AvantSearch::useElasticsearch())
-    $pdfOptionAttributes['disabled'] = true;
-
-$elasticsearchOptionAttributes = array('checked' => AvantSearch::useElasticsearch());
-if (AvantSearch::usePdfSearch())
-    $elasticsearchOptionAttributes['disabled'] = true;
 
 ?>
 
@@ -34,7 +36,7 @@ if (AvantSearch::usePdfSearch())
 </style>
 
 <div class="plugin-help learn-more">
-    <a href="https://digitalarchive.us/plugins/avantsearch/" target="_blank">Learn about the configuration options on this page</a>
+    <a href="https://github.com/gsoules/AvantSearch#usage" target="_blank">Learn about the configuration options on this page</a>
 </div>
 
 <?php if ($storageEngine != 'InnoDB'): ?>
@@ -78,11 +80,66 @@ if (AvantSearch::usePdfSearch())
 
 <div class="field">
     <div class="two columns alpha">
+        <label><?php echo CONFIG_LABEL_LAYOUT_SELECTOR_WIDTH; ?></label>
+    </div>
+    <div class="inputs five columns omega">
+        <p class="explanation"><?php echo __('The width of the layout selector dropdown.'); ?></p>
+        <?php echo $view->formText(SearchConfig::OPTION_LAYOUT_SELECTOR_WIDTH, $layoutSelectorWidth); ?>
+    </div>
+</div>
+
+
+<div class="field">
+    <div class="two columns alpha">
         <label><?php echo CONFIG_LABEL_DETAIL_LAYOUT; ?></label>
     </div>
     <div class="inputs five columns omega">
         <p class="explanation"><?php echo __("Detail layout elements."); ?></p>
-        <?php echo $view->formTextarea(SearchConfig::OPTION_DETAIL_LAYOUT, $detailLayoutOption, array('rows' => $detailLayoutRows)); ?>
+        <?php echo $view->formTextarea(SearchConfig::OPTION_DETAIL_LAYOUT, $detailLayoutOption, array('rows' => '2')); ?>
+    </div>
+</div>
+
+<div class="field">
+    <div class="two columns alpha">
+        <label><?php echo CONFIG_LABEL_INDEX_VIEW; ?></label>
+    </div>
+    <div class="inputs five columns omega">
+        <p class="explanation"><?php echo __("Elements that can be used as the Index View field."); ?></p>
+        <?php echo $view->formTextarea(SearchConfig::OPTION_INDEX_VIEW, $indexViewOption, array('rows' => $indexViewOptionRows)); ?>
+    </div>
+</div>
+
+<div class="field">
+    <div class="two columns alpha">
+        <label><?php echo CONFIG_LABEL_TREE_VIEW; ?></label>
+    </div>
+    <div class="inputs five columns omega">
+        <p class="explanation"><?php echo __("Elements that can be used as the Tree View field."); ?></p>
+        <?php echo $view->formTextarea(SearchConfig::OPTION_TREE_VIEW, $treeViewOption, array('rows' => $treeViewOptionRows)); ?>
+    </div>
+</div>
+
+<div class="field">
+    <div class="two columns alpha">
+        <label><?php echo CONFIG_LABEL_RELATIONSHIPS_VIEW; ?></label>
+    </div>
+    <div class="inputs five columns omega">
+        <?php if ($relationshipsViewSupported): ?>
+            <p class="explanation"><?php echo __('Show the option to display results in Relationships View.'); ?></p>
+            <?php echo $view->formCheckbox(SearchConfig::OPTION_RELATIONSHIPS_VIEW, true, array('checked' => (boolean)get_option(SearchConfig::OPTION_RELATIONSHIPS_VIEW))); ?>
+        <?php else: ?>
+            <?php SearchConfig::emitOptionNotSupported('AvantSearch', 'relationships-view'); ?>
+        <?php endif; ?>
+    </div>
+</div>
+
+<div class="field">
+    <div class="two columns alpha">
+        <label><?php echo CONFIG_LABEL_HIERARCHIES; ?></label>
+    </div>
+    <div class="inputs five columns omega">
+        <p class="explanation"><?php echo __('Elements that contain hierarchical values.'); ?></p>
+        <?php echo $view->formTextarea(SearchConfig::OPTION_HIERARCHIES, $hierarchiesOption, array('rows' => $hierarchiesOptionRows)); ?>
     </div>
 </div>
 
@@ -91,7 +148,7 @@ if (AvantSearch::usePdfSearch())
         <label><?php echo CONFIG_LABEL_INTEGER_SORTING; ?></label>
     </div>
     <div class="inputs five columns omega">
-        <p class="explanation"><?php echo __("Columns that should be sorted as integers. Can be used with mixed values (integer and text). Requires Elasticsearch reindex."); ?></p>
+        <p class="explanation"><?php echo __("Columns that should be sorted as integers."); ?></p>
         <?php echo $view->formTextarea(SearchConfig::OPTION_INTEGER_SORTING, $integerSortingOption, array('rows' => $integerSortingOptionRows)); ?>
     </div>
 </div>
@@ -105,31 +162,7 @@ if (AvantSearch::usePdfSearch())
             <p class="explanation"><?php echo __('Sort street addresses by street name, then by street number.'); ?></p>
             <?php echo $view->formCheckbox(SearchConfig::OPTION_ADDRESS_SORTING, true, array('checked' => (boolean)get_option(SearchConfig::OPTION_ADDRESS_SORTING))); ?>
         <?php else: ?>
-            <?php SearchConfig::emitOptionNotSupported('AvantSearch', 'address-sorting-option'); ?>
-        <?php endif; ?>
-    </div>
-</div>
-
-<div class="field">
-    <div class="two columns alpha">
-        <label><?php echo CONFIG_LABEL_PDFSEARCH; ?></label>
-    </div>
-    <div class="inputs five columns omega">
-        <p class="explanation"><?php echo __('Use PDF search. Turning this option on will add PDF texts to the search table which can take a very long time so be patient. Turning it off will not remove the PDF text. To remove it, run <b>Index Records</b> on the Omeka Settings > Search page. Do not enable the option more than once without running Index Records in between or else you will end up with duplicate PDF text in the search table.'); ?></p>
-        <?php echo $view->formCheckbox(SearchConfig::OPTION_PDFSEARCH, true, $pdfOptionAttributes); ?>
-    </div>
-</div>
-
-<div class="field">
-    <div class="two columns alpha">
-        <label><?php echo CONFIG_LABEL_ELASTICSEARCH; ?></label>
-    </div>
-    <div class="inputs five columns omega">
-        <?php if ($elasticsearchSupported): ?>
-            <p class="explanation"><?php echo __('Use Elasticsearch.'); ?></p>
-            <?php echo $view->formCheckbox(SearchConfig::OPTION_ELASTICSEARCH, true, $elasticsearchOptionAttributes); ?>
-        <?php else: ?>
-            <?php SearchConfig::emitOptionNotSupported('AvantSearch', 'elasticsearch'); ?>
+            <?php SearchConfig::emitOptionNotSupported('AvantSearch', 'address-sorting'); ?>
         <?php endif; ?>
     </div>
 </div>

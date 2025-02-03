@@ -1,25 +1,6 @@
 <?php
 class AvantSearch
 {
-    // This is the default maximum allowed by Elasticsearch and is also a reasonable max for SQL searches.
-    const MAX_SEARCH_RESULTS = 10000;
-    const SORT_BY_MODIFIED = 'modified date';
-    const SORT_BY_RELEVANCE = 'relevance';
-    const SITE_THIS = 'This Site';
-    const SITE_SHARED = 'All Sites';
-
-    public static function allowToggleBetweenLocalAndSharedSearching()
-    {
-        $allow = false;
-        if  (self::useElasticsearch())
-        {
-            $sharedIndexIsEnabled = (bool)get_option(ElasticsearchConfig::OPTION_ES_SHARE) == true;
-            $localIndexIsEnabled = (bool)get_option(ElasticsearchConfig::OPTION_ES_LOCAL) == true;
-            $allow = $sharedIndexIsEnabled && $localIndexIsEnabled;
-        }
-        return $allow;
-    }
-
     public static function buildSearchQuery($args)
     {
         $params = $args['params'];
@@ -49,10 +30,6 @@ class AvantSearch
 
     public static function emitSearchResultsTableCss()
     {
-        $viewId = isset($_GET['view']) ? $_GET['view'] : SearchResultsViewFactory::TABLE_VIEW_ID;
-        if ($viewId != SearchResultsViewFactory::TABLE_VIEW_ID)
-            return;
-
         $columnsData = SearchConfig::getOptionDataForColumns();
 
         $css = array();
@@ -179,151 +156,19 @@ class AvantSearch
         return $elementTexts;
     }
 
-    public static function getHiddenInputsForAdvancedSearch()
-    {
-        // Don't specify any query string args that are needed for an advanced search query. No args means preserves all
-        // args, including applied facets, when going back and forth between Advanced Search and search results.
-        $allowedInputs = array();
-
-        return self::getSearchFormInputsHtml($allowedInputs);
-    }
-
-    public static function getHiddenInputsForSimpleSearch()
-    {
-        // Specify which query string args are needed for a simple search query. This will cause other args, in
-        // particular those for applied facets, to be discarded. Note that 'sort' is excluded from the list so that
-        // results from a new simple search are always returned by relevance and not whatever sort order was
-        // was meaningful for the previous result set. The 'filter' option is excluded as well so that you get back
-        // all the results, not just those containing images.
-        $allowedInputs = array('index', 'layout', 'limit', 'order', 'site', 'view');
-
-        return self::getSearchFormInputsHtml($allowedInputs);
-    }
-
-    public static function getSearchFilterResetLink($url)
-    {
-        return '<a href="' . $url . '" title="Remove facet" class="search-reset-link search-link">' . '&#10006;' . '</a>';
-    }
-
     public static function getSearchFormHtml()
     {
-        // This method constructs the HTML that will replace the native Omeka search form with the one for AvantSearch.
+        $url = url('find');
 
-        $useElasticsearch = self::useElasticsearch();
-        $request = Zend_Controller_Front::getInstance()->getRequest();
-        $action = $request->getActionName();
-        $isAdvancedSearchPage = $action == 'advanced-search' && $useElasticsearch;
-
-        $placeholderText = __('Enter keywords to search for');
-        $query = isset($_GET['query']) && !$isAdvancedSearchPage ? htmlspecialchars($_GET['query'], ENT_QUOTES) : '';
-        $queryString = empty($_SERVER['QUERY_STRING']) ? '' : '?' . $_SERVER['QUERY_STRING'];
-        $advancedSearchUrl = url('/find/advanced') . $queryString;
-
-        if (self::useElasticsearch())
-        {
-            // Switch to table view whenever doing a new search from the search form. This is done so
-            // that keyword hits in PDF files will be visible in the Description and File Attachment text.
-            $tableViewId = SearchResultsViewFactory::TABLE_VIEW_ID;
-            $queryString = preg_replace("/view=[0-9]/", "view=$tableViewId", $queryString);
-        }
-
-        $findUrl = url('/find') . $queryString;
-
-        $menu = public_nav_main();
-        $menuHtml = $menu->render();
-
-        // Initialize the search box with the text of the last query submitted.
-        // The search-erase <span> overlays an X in the far right of the search box to let you erase the string.
-        $html = '<div id="search-container">';
-        if (!empty($menuHtml))
-            $html .= '<a id="nav-toggle"><span></span></a>';
-        $html .= '<form id="search-form" name="search-form" action="' . $findUrl . '" method="get" class="search-form">';
-        $html .= '<span class="search-erase">';
-        $html .= '<input id="query" type="text" name="query" value="' . $query . '" title="Search" autofocus placeholder="' . $placeholderText . '">';
-
-        // Emit the hidden <input> tags needed to put query string argument values into the form.
-        $html .= self::getHiddenInputsForSimpleSearch();
-
-        if (self::useElasticsearch()) {
-            // Switch to table view.
-            $tableViewArg = 'name="view" value="' . $tableViewId . '"';
-            $html = preg_replace('/name="view" value="[0-9]"/', $tableViewArg, $html);
-        }
-
-        // Emit the X at far right used to clear the search box.
-        $html .= '<span id="search-erase-icon">&#10006;</span></span>';
-
-        // Emit the search button.
-        $html .= '<button id="submit_search" type="submit" value="Search">Search</button>';
-        $html .= '<div id="banner-links">';
-
-        // Emit the recent items and help links
-        $flaggedItemsTooltip = AvantCommon::getCustomText('flagged_items_tooltip', __('See your flagged items'));
-        $flaggedItemsLinkText = AvantCommon::getCustomText('flagged_items_link_text', __('Flagged Items'));
-        $html .= '<a href="' . public_url('/avant/recent') . '" title="' . $flaggedItemsTooltip . '">' . $flaggedItemsLinkText . '</a>';
-        $html .= '<a href="https://digitalarchive.us" target="_blank" title="' . __('Read the documentation in a separate window') . '" >' . __('Help') . '</a>';
-
-        // Emit the Advanced Search link.
-        $advancedSearchLinkText = __('Advanced Search');
-        if (!$isAdvancedSearchPage)
-            $html .= '<a href="' . $advancedSearchUrl . '" class="search-link" title="' . __('Go to the Advanced Search page') . '">' . $advancedSearchLinkText . '</a>';
-        else
-            $html .= '<span id="advanced-search-link-disabled">' . $advancedSearchLinkText . '</span>';
-
-        $html .= '</div>';
-        $html .= '</form>';
+        // Construct the HTML that will replace the native Omeka search form with the one for AvantSearch.
+        $html = '<div id="search-container" role="search">';
+        $html .= '<form id="search-form" name="search-form" action="' . $url. '" method="get">';
+        $html .= '<input type="text" name="query" id="query" value="" title="Search">';
+        $html .= '<button id="submit_search" type="submit" value="Search">Search</button></form>';
+        $html .= '<a class="simple-search-advanced-link" href="' . WEB_ROOT . '/find/advanced">Advanced Search</a>';
         $html .= '</div>';
 
         return $html;
-    }
-
-    public static function getSearchFormInputsHtml($allowedInputs)
-    {
-        // This method generates hidden <input> tags to be included in the <form> that is posted for the simple search
-        // form or the Advanced Search form. In both cases, some or all of the args from the query string need to be
-        // converted to corresponding <input> tags since a posted form cannot be used to pass along query string args.
-
-        $html = '';
-
-        // Get the query string arguments, some of which will need corresponding hidden <input> tags.
-        $queryArgs = array();
-        $entries = explode('&', http_build_query($_GET));
-        foreach ($entries as $entry)
-        {
-            if (!$entry)
-            {
-                continue;
-            }
-            list($key, $value) = explode('=', $entry);
-            $queryArgs[urldecode($key)] = urldecode($value);
-        }
-
-        foreach ($queryArgs as $key => $value)
-        {
-            // Skip any query string args that are used as options and should not be used for querying.
-            if ($key == 'query' || $key == 'keywords' || $key == 'titles' || $key == 'condition' || $key == 'tags' || $key == 'year_start' || $key == 'year_end')
-                continue;
-            if (strpos($key, 'advanced') === 0)
-                continue;
-            if (!empty($allowedInputs) && !in_array($key, $allowedInputs))
-                continue;
-
-            // Emit a hidden <input> tag for this arg that is needed for querying.
-            $html .= '<input id="search-form-' . $key . '" type="hidden" name="' . $key . '" value="' . $value . '">';
-        }
-
-        return $html;
-    }
-
-    public static function getSelectedSiteId()
-    {
-        $id = AvantCommon::queryStringArgOrCookie('site', 'SITE-ID', 0);
-
-        // Make sure that the site Id is valid. The only valid values are 0 (local site) and 1 (shared site).
-        if ($id < 0 || $id > 1)
-            $id = 0;
-
-        return $id;
     }
 
     public static function getStorageEngineForSearchTextsTable()
@@ -377,16 +222,5 @@ class AvantSearch
         }
 
         return $elementTexts;
-    }
-
-    public static function useElasticsearch()
-    {
-        // Elasticsearch is enabled when AvantElasticsearch is installed and AvantSearch is configured to use it.
-        return SearchConfig::getOptionSupportedElasticsearch() && get_option(SearchConfig::OPTION_ELASTICSEARCH);
-    }
-
-    public static function usePdfSearch()
-    {
-        return intval(get_option(SearchConfig::OPTION_PDFSEARCH));
     }
 }

@@ -1,5 +1,4 @@
 <?php
-define('AVANTSEARCH_PLUGIN_DIR', dirname(__FILE__));
 
 class AvantSearchPlugin extends Omeka_Plugin_AbstractPlugin
 {
@@ -7,7 +6,6 @@ class AvantSearchPlugin extends Omeka_Plugin_AbstractPlugin
 
     protected $_hooks = array(
         'admin_head',
-        'after_save_item',
         'before_save_item',
         'config',
         'config_form',
@@ -48,13 +46,6 @@ class AvantSearchPlugin extends Omeka_Plugin_AbstractPlugin
     public function hookAdminHead($args)
     {
         queue_css_file('avantsearch-admin');
-    }
-
-    public function hookAfterSaveItem($args)
-    {
-        $item = $args['record'];
-        $searchPdf = new SearchPdf($item);
-        $searchPdf->afterSaveItem($item);
     }
 
     public function hookBeforeSaveItem($args)
@@ -103,6 +94,7 @@ class AvantSearchPlugin extends Omeka_Plugin_AbstractPlugin
     public function hookPublicHead($args)
     {
         queue_css_file('avantsearch');
+
         AvantSearch::emitSearchResultsTableCss();
     }
 }

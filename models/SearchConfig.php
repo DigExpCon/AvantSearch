@@ -3,30 +3,34 @@
 define('CONFIG_LABEL_ADDRESS_SORTING', __('Address Sorting'));
 define('CONFIG_LABEL_COLUMNS', __('Columns'));
 define('CONFIG_LABEL_DETAIL_LAYOUT', __('Detail Layout'));
-define('CONFIG_LABEL_ELASTICSEARCH', __('Elasticsearch'));
+define('CONFIG_LABEL_INDEX_VIEW', __('Index View'));
 define('CONFIG_LABEL_INTEGER_SORTING', __('Integer Sorting'));
 define('CONFIG_LABEL_LAYOUTS', __('Layouts'));
-define('CONFIG_LABEL_PDFSEARCH', __('PDF Search'));
+define('CONFIG_LABEL_LAYOUT_SELECTOR_WIDTH', __('Layout Selector Width'));
 define('CONFIG_LABEL_RELATIONSHIPS_VIEW', __('Relationships View'));
+define('CONFIG_LABEL_HIERARCHIES', __('Hierarchies'));
 define('CONFIG_LABEL_TITLES_ONLY',  __('Titles Only'));
+define('CONFIG_LABEL_TREE_VIEW', __('Tree View'));
 
 class SearchConfig extends ConfigOptions
 {
     const OPTION_ADDRESS_SORTING = 'avantsearch_address_sorting';
     const OPTION_COLUMNS = 'avantsearch_columns';
     const OPTION_DETAIL_LAYOUT = 'avantsearch_detail_layout';
-    const OPTION_ELASTICSEARCH = 'avantsearch_elasticsearch';
+    const OPTION_INDEX_VIEW = 'avantsearch_index_view';
     const OPTION_INTEGER_SORTING = 'avantsearch_integer_sorting';
     const OPTION_LAYOUTS = 'avantsearch_layouts';
-    const OPTION_PDFSEARCH = 'avantsearch_pdfsearch';
+    const OPTION_LAYOUT_SELECTOR_WIDTH = 'avantsearch_layout_selector_width';
     const OPTION_RELATIONSHIPS_VIEW = 'avantsearch_relationships_view';
+    const OPTION_HIERARCHIES = 'avantsearch_hierarchies';
     const OPTION_TITLES_ONLY = 'avantsearch_titles_only';
+    const OPTION_TREE_VIEW = 'avantsearch_tree_view';
 
     public static function emitInnoDbMessage($engine)
     {
         echo '<p class="storage-engine learn-more">' . __('This installation uses the %s storage engine for keyword searching.</br>', $engine);
         echo "For improved search results, switch to the InnoDB storage engine. ";
-        echo "<a class='avantsearch-help' href='https://digitalarchive.us/plugins/avantsearch/#improving-search-results' target='_blank'>" . __('Learn more.') . "</a>";
+        echo "<a class='avantsearch-help' href='https://github.com/gsoules/AvantSearch#improving-search-results' target='_blank'>" . __('Learn more.') . "</a>";
         echo "</p>";
     }
 
@@ -45,9 +49,9 @@ class SearchConfig extends ConfigOptions
         {
             foreach ($row as $elementId)
             {
-                if (self::isPseudoElement($elementId))
+                if ($elementId == '<tags>')
                 {
-                    $elementName = $elementId;
+                    $elementName = '<tags>';
                 }
                 else
                 {
@@ -65,6 +69,16 @@ class SearchConfig extends ConfigOptions
         }
 
         return $data;
+    }
+
+    public static function getOptionDataForHierarchies()
+    {
+        return self::getOptionDefinitionData(self::OPTION_HIERARCHIES);
+    }
+
+    public static function getOptionDataForIndexView()
+    {
+        return self::getOptionListData(self::OPTION_INDEX_VIEW);
     }
 
     public static function getOptionDataForIntegerSorting()
@@ -102,6 +116,27 @@ class SearchConfig extends ConfigOptions
         return $data;
     }
 
+    public static function getOptionDataForTreeView()
+    {
+        return self::getOptionListData(self::OPTION_TREE_VIEW);
+    }
+
+    public static function getOptionSupportedDateRange()
+    {
+        $yearStartElementName = CommonConfig::getOptionTextForYearStart();
+        $yearEndElementName = CommonConfig::getOptionTextForYearEnd();
+        $yearStartElementId = ItemMetadata::getElementIdForElementName($yearStartElementName);
+        $yearEndElementId = ItemMetadata::getElementIdForElementName($yearEndElementName);
+        $dateElementId = ItemMetadata::getElementIdForElementName('Date');
+
+        return ($yearStartElementId != 0 && $yearEndElementId != 0 && $dateElementId != 0);
+    }
+
+    public static function getOptionSupportedRelationshipsView()
+    {
+        return plugin_is_active('AvantRelationships');
+    }
+
     public static function getOptionSupportedAddressSorting()
     {
         // Determine if this database supports the REGEXP_REPLACE function which is needed to perform
@@ -128,11 +163,6 @@ class SearchConfig extends ConfigOptions
             $supported = false;
         }
         return $supported;
-    }
-
-    public static function getOptionSupportedElasticsearch()
-    {
-        return plugin_is_active('AvantElasticsearch');
     }
 
     public static function getOptionsSupportedTitlesOnly()
@@ -209,9 +239,6 @@ class SearchConfig extends ConfigOptions
             $detailLayoutData = self::getOptionDataForDetailLayout();
             $detailLayoutOption = '';
 
-
-            // Older versions of AvantSearch allowed two comma-separated detail rows (for two detail columns)
-            // so loop over the rows in case this data has not yet been saved as a single row (for one column).
             foreach ($detailLayoutData as $detailRow)
             {
                 if (!empty($detailLayoutOption))
@@ -224,7 +251,7 @@ class SearchConfig extends ConfigOptions
                 {
                     if (!empty($row))
                     {
-                        $row .= PHP_EOL;
+                        $row .= ', ';
                     }
                     $row .= $columnName;
                 }
@@ -232,6 +259,36 @@ class SearchConfig extends ConfigOptions
             }
         }
         return $detailLayoutOption;
+    }
+
+    public static function getOptionTextForHierarchies()
+    {
+        if (self::configurationErrorsDetected())
+        {
+            $text = $_POST[self::OPTION_HIERARCHIES];
+        }
+        else
+        {
+            $data = self::getOptionDataForHierarchies();
+            $text = '';
+
+            foreach ($data as $elementId => $definition)
+            {
+                if (!empty($text))
+                {
+                    $text .= PHP_EOL;
+                }
+                $name = $definition['name'];
+                $display = $definition['display'];
+                $text .= "$name: $display";
+            }
+        }
+        return $text;
+    }
+
+    public static function getOptionTextForIndexView()
+    {
+        return self::getOptionListText(self::OPTION_INDEX_VIEW);
     }
 
     public static function getOptionTextForIntegerSorting()
@@ -284,40 +341,45 @@ class SearchConfig extends ConfigOptions
         return $layoutsOption;
     }
 
-    protected static function isPseudoElement($name)
+    public static function getOptionTextForLayoutSelectorWidth()
     {
-        $pseudoElements = array('<tags>', '<score>');
-        return in_array($name, $pseudoElements);
+        if (self::configurationErrorsDetected())
+        {
+            $layoutSelectorWidth = $_POST[self::OPTION_LAYOUT_SELECTOR_WIDTH];
+        }
+        else
+        {
+            $layoutSelectorWidth = get_option(self::OPTION_LAYOUT_SELECTOR_WIDTH);
+        }
+        return $layoutSelectorWidth;
+    }
+
+    public static function getOptionTextForTreeView()
+    {
+        return self::getOptionListText(self::OPTION_TREE_VIEW);
+    }
+
+    public static function isHierarchyElementThatDisplaysAs($elementId, $display)
+    {
+        $hierarchyElements = SearchConfig::getOptionDataForHierarchies();
+        $isHierarchyElement = array_key_exists($elementId, $hierarchyElements);
+        return $isHierarchyElement && $hierarchyElements[$elementId]['display'] == $display;
     }
 
     public static function saveConfiguration()
     {
-        $oldPdfOption = intval(get_option(self::OPTION_PDFSEARCH));
-        $newPdfOption = intval($_POST[self::OPTION_PDFSEARCH]);
-        $elasticsearchOption = intval($_POST[self::OPTION_ELASTICSEARCH]);
-        self::errorIf((boolean)$newPdfOption && (boolean)$elasticsearchOption, "Error", __('You cannot choose both PDF Search and Elasticsearch.'));
-
         self::saveOptionDataForLayouts();
+        self::saveOptionDataForLayoutSelectorWidth();
         self::saveOptionDataForColumns();
         self::saveOptionDataForDetailLayout();
+        self::saveOptionDataForIndexView();
+        self::saveOptionDataForTreeView();
+        self::saveOptionDataForHierarchies();
         self::saveOptionDataForIntegerSorting();
 
         set_option(self::OPTION_TITLES_ONLY, intval($_POST[self::OPTION_TITLES_ONLY]));
         set_option(self::OPTION_RELATIONSHIPS_VIEW, intval($_POST[self::OPTION_RELATIONSHIPS_VIEW]));
         set_option(self::OPTION_ADDRESS_SORTING, intval($_POST[self::OPTION_ADDRESS_SORTING]));
-        set_option(self::OPTION_ELASTICSEARCH, $elasticsearchOption);
-
-        if ($oldPdfOption != $newPdfOption)
-        {
-            // The PDF option was toggled. If enabled, make the PDF text searchable. Do nothing if
-            // disabled. The user will need to run the Omeka search reindex to remove the PDF text.
-            set_option(self::OPTION_PDFSEARCH, $newPdfOption);
-            if ($newPdfOption == 1)
-            {
-                $searchPdf = new SearchPdf();
-                $searchPdf->addPdfTextToSearchTextsTable();
-            }
-        }
     }
 
     public static function saveOptionDataForColumns()
@@ -368,31 +430,71 @@ class SearchConfig extends ConfigOptions
     public static function saveOptionDataForDetailLayout()
     {
         $detailRows = array();
-        $detailLayout = array_map('trim', explode(PHP_EOL, $_POST[self::OPTION_DETAIL_LAYOUT]));
-
-        foreach ($detailLayout as $elementName)
+        $detailLayouts = array_map('trim', explode(PHP_EOL, $_POST[self::OPTION_DETAIL_LAYOUT]));
+        $row = 0;
+        foreach ($detailLayouts as $detailLayout)
         {
-            if (empty($elementName))
+            if (empty($detailLayout))
                 continue;
 
-            self::errorIf($elementName == 'Title', CONFIG_LABEL_DETAIL_LAYOUT, __('The Title element cannot be used in the Detail Layout.'));
-
-            if (self::isPseudoElement($elementName))
+            $elementNames = array_map('trim', explode(',', $detailLayout));
+            foreach ($elementNames as $elementName)
             {
-                $elementId = $elementName;
-            }
-            else
-            {
-                $elementId = ItemMetadata::getElementIdForElementName($elementName);
-                self::errorIfNotElement($elementId, CONFIG_LABEL_DETAIL_LAYOUT, $elementName);
-            }
+                if (empty($elementName))
+                    continue;
 
-            // Older versions of AvantSearch allowed two comma-separated detail rows (for two detail columns)
-            // so for backward compatibility, save the data in the 1st row of an array with only one row.
-            $detailRows[0][] = $elementId;
+                if ($elementName == '<tags>')
+                {
+                    $elementId = '<tags>';
+                }
+                else
+                {
+                    $elementId = ItemMetadata::getElementIdForElementName($elementName);
+                    self::errorIfNotElement($elementId, CONFIG_LABEL_DETAIL_LAYOUT, $elementName);
+                }
+                $detailRows[$row][] = $elementId;
+            }
+            $row++;
         }
 
         set_option(self::OPTION_DETAIL_LAYOUT, json_encode($detailRows));
+    }
+
+    public static function saveOptionDataForHierarchies()
+    {
+        $data = array();
+        $definitions = array_map('trim', explode(PHP_EOL, $_POST[self::OPTION_HIERARCHIES]));
+        foreach ($definitions as $definition)
+        {
+            if (empty($definition))
+                continue;
+
+            // Text Field definitions are of the form: <element-name> ":" <display-option>
+            $parts = array_map('trim', explode(':', $definition));
+
+            $elementName = $parts[0];
+            $display = isset($parts[1]) ? trim($parts[1]) : '';
+            self::errorRowIf(strlen($display) == 0, CONFIG_LABEL_HIERARCHIES, $elementName, __("No display option specified."));
+
+            $options = array('root', 'leaf');
+            if (!empty($display) && !in_array($display, $options))
+            {
+                $allowed = implode(', ', $options);
+                self::errorRowIf(true, CONFIG_LABEL_HIERARCHIES, $elementName, __("'%s' is not a valid display option. Options: %s.", $display, $allowed));
+            }
+
+            $elementId = ItemMetadata::getElementIdForElementName($elementName);
+            self::errorIfNotElement($elementId, CONFIG_LABEL_HIERARCHIES, $elementName);
+
+            $data[$elementId] = array('display' => $display);
+        }
+
+        set_option(self::OPTION_HIERARCHIES, json_encode($data));
+    }
+
+    public static function saveOptionDataForIndexView()
+    {
+        self::saveOptionListData(self::OPTION_INDEX_VIEW, CONFIG_LABEL_INDEX_VIEW);
     }
 
     public static function saveOptionDataForIntegerSorting()
@@ -402,7 +504,6 @@ class SearchConfig extends ConfigOptions
 
     public static function saveOptionDataForLayouts()
     {
-        $privateElements = CommonConfig::getOptionDataForPrivateElements();
         $layouts = array();
         $layoutDefinitions = array_map('trim', explode(PHP_EOL, $_POST[self::OPTION_LAYOUTS]));
         foreach ($layoutDefinitions as $layoutDefinition)
@@ -448,7 +549,6 @@ class SearchConfig extends ConfigOptions
 
             $columnString = isset($parts[1]) ? $parts[1] : '';
             $columns = array_map('trim', explode(',', $columnString));
-
             foreach ($columns as $elementName)
             {
                 if (empty($elementName))
@@ -457,9 +557,6 @@ class SearchConfig extends ConfigOptions
                 $elementId = ItemMetadata::getElementIdForElementName($elementName);
                 self::errorRowIf($elementId == 0, CONFIG_LABEL_LAYOUTS, $id, __("'%s' is not an element.", $elementName));
 
-                $privateInPublicLayout = isset($privateElements[$elementId]) && $rights != 'admin';
-                self::errorRowIf($privateInPublicLayout, CONFIG_LABEL_LAYOUTS, $id, __("Private element '%s' can only be used in an admin layout.", $elementName));
-
                 $layouts[$idNumber]['columns'][] = $elementId ;
             }
         }
@@ -467,8 +564,23 @@ class SearchConfig extends ConfigOptions
         set_option(self::OPTION_LAYOUTS, json_encode($layouts));
     }
 
+    public static function saveOptionDataForLayoutSelectorWidth()
+    {
+        $layoutSelectorWidth = intval($_POST[self::OPTION_LAYOUT_SELECTOR_WIDTH]);
+        self::errorIf($layoutSelectorWidth < 100, null, __('Layout Selector Width must be an integer value of 100 or greater.'));
+
+        set_option(self::OPTION_LAYOUT_SELECTOR_WIDTH, $layoutSelectorWidth);
+    }
+
+    public static function saveOptionDataForTreeView()
+    {
+        self::saveOptionListData(self::OPTION_TREE_VIEW, CONFIG_LABEL_TREE_VIEW);
+    }
+
     public static function setDefaultOptionValues()
     {
+        set_option(self::OPTION_LAYOUT_SELECTOR_WIDTH, 175);
+
         // Create default L1 and L2 layouts.
         $identifierElementId = ItemMetadata::getElementIdForElementName('Identifier');
         $titleElementId = ItemMetadata::getElementIdForElementName('Title');

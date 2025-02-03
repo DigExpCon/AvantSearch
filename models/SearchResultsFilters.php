@@ -2,337 +2,177 @@
 
 class SearchResultsFilters
 {
-    protected $advancedArgsArray = array();
-    protected $basicArgsArray = array();
+    /* @var $searchResults SearchResultsIndexView */
     protected $filterCount;
-    protected $filterMessageHtml;
-    protected $filterMessageText;
+    protected $filterMessage;
     protected $searchResults;
 
     function __construct($searchResults)
     {
-        /* @var $searchResults SearchResultsView */
         $this->searchResults = $searchResults;
         $this->filterCount = 0;
-        $this->filterMessageHtml = '';
-        $this->filterMessageText = '';
+        $this->filterMessage = '';
     }
 
-    protected function createFilterWithRemoveX($filter, $resetUrl, $isFacet = false)
+    protected function addFilterMessageCriteria($criteria)
     {
-        $link = AvantSearch::getSearchFilterResetLink($resetUrl);
-        $facetClass = $isFacet ? ' search-facet' : '';
-        $this->filterMessageHtml .= "<span class='search-filter$facetClass'>$filter$link</span>";
-        $this->filterMessageText .= $filter . PHP_EOL;
+        $criteria = trim($criteria);
+        if (!empty($this->filterMessage))
+        {
+            if (strpos($criteria, __('AND'), 0) === false && strpos($criteria, __('OR'), 0) === false)
+                $this->filterMessage .= ',';
+            $this->filterMessage .= ' ';
+        }
+        $this->filterMessage .= "$criteria";
         $this->filterCount++;
     }
 
-    protected function emitAdvancedSearchFilters()
+    public function emitSearchFilters($layoutIndicator, $paginationNav, $filtersExpected)
     {
-        if (empty($this->advancedArgsArray))
-            return;
+        $request = Zend_Controller_Front::getInstance()->getRequest();
+        $requestArray = $request->getParams();
 
-        // Get all the arguments from the query string.
-        $queryArgs = explode('&', http_build_query($_GET));
+        $db = get_db();
+        $displayArray = array();
 
-        // Get just the Advanced Search arguments, each of which is an array of element_id, type, and terms.
-        $advancedQueryStringArgs = isset($_GET['advanced']) ? $_GET['advanced'] : array();
-        $advancedArgsIndex = 0;
+        $subjectSearch = empty($_GET['subjects']) ? '0' : intval($_GET['subjects']);
 
-        // Examine each Advanced Search argument to determine if it should be removed from the query string.
-        foreach ($advancedQueryStringArgs as $advancedQueryStringArgsIndex => $advancedQueryStringArg)
+
+        $keywords = $this->searchResults->getKeywords();
+        if (!empty($keywords))
         {
-            // Get the text for this argument that will appear as a removable filter.
-            if (!array_key_exists($advancedArgsIndex, $this->advancedArgsArray))
-                continue;
-            $advancedArg = $this->advancedArgsArray[$advancedArgsIndex];
-            $advancedArgsIndex++;
+            $condition = $this->searchResults->getKeywordsCondition();
 
-            // Make a copy of the arguments array that the following code can modify without affecting the original.
-            $args = $queryArgs;
-
-            // Examine each arg/value pair, looking for the one that matches the current Advanced Search arg.
-            foreach ($args as $argsIndex => $pair)
+            if ($condition == SearchResultsView::KEYWORD_CONDITION_ALL_WORDS || $condition == SearchResultsView::KEYWORD_CONDITION_BOOLEAN)
             {
-                // Skip any args that are not for Advanced Search.
-                if (strpos($pair, 'advanced') === false)
+                $words = explode(' ', $keywords);
+                $words = array_map('trim', $words);
+                $keywords = '';
+                foreach ($words as $word)
+                {
+                    if (empty($word) || SearchQueryBuilder::isStopWord($word))
+                        continue;
+                    if (!empty($keywords))
+                        $keywords .= ' ';
+                    $keywords .= $word;
+                }
+            }
+
+            $conditionName = $this->searchResults->getKeywordsConditionName();
+            $displayArray[__('Keywords')] = "\"$keywords\" ($conditionName)";
+        }
+
+        if (array_key_exists('advanced', $requestArray))
+        {
+            $advancedArray = array();
+            $index = 0;
+            foreach ($requestArray['advanced'] as $i => $row)
+            {
+                if (empty($row['element_id']) || empty($row['type']))
                     continue;
 
-                // Create a prefix for this arg based on its index e.g. 'advanced[0'. Note that the arg is encoded and
-                // so the prefix will actually look like 'advanced%5B0' The prefix length includes index length.
-                $advancedPrefix = urlencode('advanced[');
-                $prefixLength = strlen($advancedPrefix) + ($advancedQueryStringArgsIndex <= 9 ? 1 : 2);
-                $prefix = substr($pair, 0, $prefixLength);
-                $argPrefix = "$advancedPrefix$advancedQueryStringArgsIndex";
-
-                if (strpos($prefix, $argPrefix) === 0)
-                {
-                    // Remove this arg from the copy of the query args array.
-                    unset($args[$argsIndex]);
-                }
-            }
-
-            // Reconstruct the query string from the args array minus the arg that just got removed.
-            $query = '?';
-            foreach ($args as $pair)
-            {
-                if (strlen($query) > 1)
-                {
-                    $query .= '&';
-                }
-                $query .= $pair;
-            }
-
-            $this->createFilterWithRemoveX($advancedArg, $query);
-        }
-    }
-
-    protected function emitBasicSearchFilters()
-    {
-        if (empty($this->basicArgsArray))
-            return;
-
-        // Get all the arguments from the query string.
-        $queryArgs = explode('&', http_build_query($_GET));
-
-        foreach ($this->basicArgsArray as $argName => $basicArg)
-        {
-            // Make a copy of the arguments array that the following code can modify without affecting the original.
-            $args = $queryArgs;
-
-            // Examine each arg/value pair, looking for the one that matches the current basic arg.
-            foreach ($args as $argsIndex => $pair)
-            {
-                // Skip any args that are for Advanced Search.
-                if (strpos($pair, 'advanced') === 0)
+                if ($subjectSearch && $row['terms'] == '*')
                     continue;
 
-                $encodedBasicArg = $argName . '=' . urlencode($basicArg['value']);
-                if ($encodedBasicArg == $pair)
+                $elementId = $row['element_id'];
+                $element = $db->getTable('Element')->find($elementId);
+                if (empty($element))
+                    continue;
+                $elementName = $element->name;
+                $type = __($row['type']);
+                $advancedValue = $elementName . ' ' . $type;
+                if (isset($row['terms']) && $type != 'is empty' && $type != 'is not empty')
                 {
-                    // Remove this arg from the copy of the query args array.
-                    unset($args[$argsIndex]);
+                    $advancedValue .= ' "' . $row['terms'] . '"';
                 }
-            }
 
-            // Reconstruct the query string from the args array minus the arg that just got removed.
-            $query = '?';
-            foreach ($args as $pair)
-            {
-                if (strlen($query) > 1)
+                if ($index)
                 {
-                    $query .= '&';
+                    if(isset($row['joiner']) && $row['joiner'] === 'or')
+                    {
+                        $advancedValue = __('OR') . ' ' . $advancedValue;
+                    }
+                    else
+                    {
+                        $advancedValue = __('AND') . ' ' . $advancedValue;
+                    }
                 }
-                $query .= $pair;
-            }
-
-            $this->createFilterWithRemoveX($basicArg['display'], $query);
-        }
-    }
-
-    protected function emitElasticsearchFilters()
-    {
-        $query = $this->searchResults->getQuery();
-
-        $avantElasticsearchFacets = new AvantElasticsearchFacets();
-        $filterBarFacets = $avantElasticsearchFacets->getFilterBarFacets($query);
-
-        foreach ($filterBarFacets as $group => $values)
-        {
-            foreach ($values['reset-url'] as $index => $url)
-            {
-                $this->createFilterWithRemoveX($values['reset-text'][$index], $url, true);
+                $advancedArray[$index++] = $advancedValue;
             }
         }
-    }
 
-    protected function getAdvancedSearchArgs($useElasticsearch)
-    {
-        $queryArgs = $this->searchResults->removeInvalidAdvancedQueryArgs($_GET);
-        $advancedQueryArgs = isset($queryArgs['advanced']) ? $queryArgs['advanced'] : array();
-        $advancedIndex = 0;
-
-        foreach ($advancedQueryArgs as $advancedArg)
+        if (!empty($_GET['tags']))
         {
-            if (empty($advancedArg['element_id']) || empty($advancedArg['type']))
-            {
-                continue;
-            }
+            $tags = $_GET['tags'];
+            $displayArray['Tags'] = $tags;
+        }
 
-            $elementId = $advancedArg['element_id'];
+        if (!empty($_GET['year_start']) || !empty($_GET['year_end']))
+        {
+            $dateStart = empty($_GET['year_start']) ? '0' : intval(trim($_GET['year_start']));
+            $dateEnd = empty($_GET['year_end']) ? '0' : intval(trim($_GET['year_end']));
 
-            if (ctype_digit($elementId))
-            {
-                // The value is an Omeka element Id.
-                $elementName = ItemMetadata::getElementNameFromId($elementId);
-            }
+            if ($dateStart && $dateEnd)
+                $displayArray[__('Date Range')] = "$dateStart to $dateEnd";
+            elseif ($dateStart)
+                $displayArray[__('\'Date equal to or after\'')] = $dateStart;
             else
-            {
-                // The value is an Omeka element name.
-                $elementName = $elementId;
-            }
-
-            if (empty($elementName))
-            {
-                continue;
-            }
-
-            $type = __($advancedArg['type']);
-            $advancedValue = $elementName . ': ' . $type;
-            if (isset($advancedArg['terms']) && $type != 'is empty' && $type != 'is not empty')
-            {
-                $terms = $advancedArg['terms'];
-
-                // Put single quotes around the terms unless they are already wrapped in double quotes.
-                $phraseMatch = strpos($terms, '"') === 0 && strrpos($terms, '"') === strlen($terms) - 1;
-                if (!$phraseMatch)
-                {
-                    $terms = "'$terms'";
-                }
-
-                $advancedValue .= " $terms";
-            }
-
-            if ($advancedIndex && !$useElasticsearch)
-            {
-                if (isset($advancedArg['joiner']) && $advancedArg['joiner'] === 'or')
-                {
-                    $advancedValue = __('OR') . ' ' . $advancedValue;
-                }
-                else
-                {
-                    $advancedValue = __('AND') . ' ' . $advancedValue;
-                }
-            }
-
-            $this->advancedArgsArray[$advancedIndex++] = $advancedValue;
+                $displayArray[__('\'Date equal to or before')] = $dateEnd;
         }
-    }
 
-    protected function getKeywordsArg($useElasticsearch)
-    {
-        $query = $this->searchResults->getKeywords();
+        $layoutDetails = '';
 
-        if (empty($query))
-            return;
-
-        // Derive the query arg name/value pair based on whether the keywords came from the
-        // simple search textbox ('query') or the Advanced Search page keywords field ('keywords').
-        $argName = isset($_GET['keywords']) ? 'keywords' : 'query';
-        $this->basicArgsArray[$argName]['value'] = $query;
-
-        $condition = $this->searchResults->getKeywordsCondition();
-        $qualifier = '';
-
-        if ($condition == SearchResultsView::KEYWORD_CONDITION_ALL_WORDS || $condition == SearchResultsView::KEYWORD_CONDITION_BOOLEAN)
+        if ($this->searchResults->getTotalResults() && $this->searchResults->getViewId() == SearchResultsViewFactory::TABLE_VIEW_ID)
         {
-            $words = array_map('trim', explode(' ', $query));
-            $keywords = '';
+            $layoutDetails .= __('Sorted by %s', $this->searchResults->getSortFieldName());
+        }
 
-            foreach ($words as $word)
+        if ($this->searchResults->getSearchFiles() && $this->searchResults->getTotalResults() > 0)
+        {
+            $layoutDetails .= ' ' .  ' <span class="search-files-only">' . __('(only showing items with images or files)') . '</span>';
+        }
+
+        if (!empty($layoutDetails))
+        {
+            $layoutDetails = "<div class='search-filter-bar-layout-details'>$layoutDetails</div>";
+        }
+
+        $layoutMessage = $layoutIndicator . $layoutDetails;
+
+        foreach ($displayArray as $name => $query)
+        {
+            if ($name == __('Keywords') && $this->searchResults->getSearchTitles())
             {
-                if (empty($word) || (!$useElasticsearch && SearchQueryBuilder::isStopWord($word)))
-                    continue;
-
-                if (!empty($keywords))
-                    $keywords .= ' ';
-
-                $keywords .= $word;
+                $name .= ' ' . __('in') . ' <span class="search-titles-only">' . __('titles only') . '</span>';
             }
 
-            if (!$useElasticsearch)
+            $this->addFilterMessageCriteria($name . ': ' . html_escape($query));
+        }
+
+        if (!empty($advancedArray))
+        {
+            foreach ($advancedArray as $j => $advanced)
             {
-                $condition = strtolower($this->searchResults->getKeywordsConditionName());
-                if ($this->searchResults->getSearchTitles())
-                {
-                    $condition .= __(' in titles only');
-                }
-                $qualifier = " ($condition)";
+                $this->addFilterMessageCriteria(html_escape($advanced));
             }
         }
-        else
+
+        if ($filtersExpected && $this->filterCount == 0)
         {
-            $keywords = $query;
+            $message = __('No search filters');
+            $this->addFilterMessageCriteria(html_escape($message));
         }
 
-        // Put single quotes around the keywords unless they are already wrapped in double quotes.
-        $phraseMatch = strpos($keywords, '"') === 0 && strrpos($keywords, '"') === strlen($keywords) - 1;
-        if (!$phraseMatch)
+        $class = 'search-filter-bar-layout';
+        if (empty($layoutDetails))
         {
-            $keywords = "'$keywords'";
+            $class .= ' no-details';
         }
-
-        $this->basicArgsArray[$argName]['display'] = $keywords . $qualifier;
-    }
-
-    protected function getSearchFilters()
-    {
-        $useElasticsearch = $this->searchResults->useElasticsearch();
-
-        $this->getKeywordsArg($useElasticsearch);
-        $this->getAdvancedSearchArgs($useElasticsearch);
-        $this->getTagsArg();
-        $this->getYearRangeArgs();
-
-        $this->filterMessageHtml .= __('You searched for: ');
-
-        $this->emitBasicSearchFilters();
-        $this->emitAdvancedSearchFilters();
-
-        if ($useElasticsearch)
-        {
-            $this->emitElasticsearchFilters();
-        }
-    }
-
-    public function getSearchFiltersHtml($resultControlsHtml, $showSelectorBar)
-    {
-        $this->getSearchFilters();
-
-        $html = $this->filterCount> 0 ? "<div id='search-filters-message'>$this->filterMessageHtml</div>" : '';
-
-        if ($showSelectorBar)
-        {
-            $html .= "<div id='search-selector-bar'>";
-            $html .= "<div id='search-selectors'>{$resultControlsHtml}</div>";
-            $html .= "</div>";
-        }
+        $html = "<div id='search-filter-bar'>";
+        $html .= $this->filterCount> 0 ? "<div class='search-filter-bar-message'>$this->filterMessage</div>" : '';
+        $html .= "<div class='$class'>{$layoutMessage}{$paginationNav}</div>";
+        $html .= '</div>';
 
         return $html;
-    }
-
-    public function getSearchFiltersText()
-    {
-        $this->getSearchFilters();
-        return $this->filterMessageText;
-    }
-
-    protected function getTagsArg()
-    {
-        $tags = $this->searchResults->getTags();
-
-        if (!empty($tags))
-        {
-            $this->basicArgsArray['tags']['value'] = $tags;
-            $this->basicArgsArray['tags']['display'] = __('Tags: ') . $tags;
-        }
-    }
-
-    protected function getYearRangeArgs()
-    {
-        $yearStart = $this->searchResults->getYearStart();
-        $yearEnd = $this->searchResults->getYearEnd();
-
-        if ($yearStart > 0)
-        {
-            $this->basicArgsArray['year_start']['value'] = $yearStart;
-            $this->basicArgsArray['year_start']['display'] = __('Year start: ') . $yearStart;
-        }
-
-        if ($yearEnd > 0)
-        {
-            $this->basicArgsArray['year_end']['value'] = $yearEnd;
-            $this->basicArgsArray['year_end']['display'] = __('Year end: ') . $yearEnd;
-        }
     }
 }

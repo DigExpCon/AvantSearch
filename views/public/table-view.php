@@ -1,153 +1,94 @@
 <?php
 /* @var $searchResults SearchResultsTableView */
 
-$createReport = plugin_is_active('AvantReport') && isset($_GET['report']);
-$reportCreationError = '';
-if ($createReport)
-{
-    $report = new AvantReport();
-    $error = $report->createReportForSearchResults($searchResults);
-    if ($error)
-        $reportCreationError = __('An error occurred while creating the PDF report: %s', $error);
-    else
-        exit();
-}
-
-$useElasticsearch = $searchResults->useElasticsearch();
 $results = $searchResults->getResults();
 $totalResults = $searchResults->getTotalResults();
-$resultsMessage = SearchResultsView::getSearchResultsMessage($totalResults, $searchResults->getResultsAreFuzzy());
+$showRelationships = $searchResults->getShowRelationships();
+$pageTitle = SearchResultsView::getSearchResultsMessage($totalResults);
 
+$layoutId = $searchResults->getLayoutId();
 $layoutsData = $searchResults->getLayoutsData();
+$layoutIdFirst = $searchResults->getLayoutIdFirst();
+$layoutIdLast = $searchResults->getLayoutIdLast();;
+
 $detailLayoutData = $searchResults->getDetailLayoutData();
-$detailElements = isset($detailLayoutData[0]) ? $detailLayoutData[0] : array();
+$column1 =  isset($detailLayoutData[0]) ? $detailLayoutData[0] : array();
+$column2 =  isset($detailLayoutData[1]) ? $detailLayoutData[1] : array();
 
-$user = current_user();
-$userCanEdit = !empty($user) && ($user->role == 'super' || $user->role == 'admin');
-$identifierAliasName = ItemMetadata::getIdentifierAliasElementName();
-$checkboxFieldData = plugin_is_active('AvantElements') ? ElementsConfig::getOptionDataForCheckboxField() : array();
-$allowSortByRelevance = $searchResults->allowSortByRelevance();
+echo head(array('title' => $pageTitle));
+echo "<!-- plugins/AvantSearch/views/public/table-view.php -->";
+echo "<div class='search-results-container'>";
+echo "<div class='search-results-title'><h1>$pageTitle</h1></div>";
 
-$layoutData = $searchResults->getLayoutsData();
-$layoutId = $searchResults->getSelectedLayoutId();
-if (empty(current_user()))
+$layoutButtonHtml = '';
+if ($totalResults)
 {
-    $layoutDefinition = $layoutsData[$layoutId];
-    if ($layoutDefinition['admin'])
+    // Get the width of the layout selector. Because of the fact that this control is a button with a dropdown effect
+    // created from ul and li tags, and because we don't know how wide the contents will be, it's nearly impossible
+    // to properly style the width of button and dropdown using CSS. Instead we let the admin choose its width.
+    $width = intval(SearchConfig::getOptionTextForLayoutSelectorWidth());
+    if ($width == 0)
+        $width = '200';
+
+    $layoutButtonHtml = "<div class='search-results-toggle'>";
+    $layoutButtonHtml .= "<button class='search-results-layout-options-button' style='width:{$width}px;'></button>";
+    $layoutButtonHtml .= "<div class='search-results-layout-options'>";
+    $layoutButtonHtml .= "<ul>";
+    foreach ($layoutsData as $idNumber => $layout)
     {
-        // This is an admin layout, but no one is logged in. Switch to the L1 Details layout.
-        $layoutId = 1;
+        if (!SearchConfig::userHasAccessToLayout($layout))
+        {
+            // Omit admin layouts for non-admin users.
+            continue;
+        }
+
+        $id = "L$idNumber";
+        $layoutButtonHtml .= "<li><a id='$id' class='button show-layout-button'>{$layout['name']}</a></li>";
     }
+    $layoutButtonHtml .= " </ul>";
+    $layoutButtonHtml .= "</div>";
+    $layoutButtonHtml .= "</div>";
 }
-
-$filterId = $searchResults->getSelectedFilterId();
-$limitId = $searchResults->getSelectedLimitId();
-$siteId = $searchResults->getSelectedSiteId();
-$sortId = $searchResults->getSelectedSortId();
-$viewId = $searchResults->getSelectedViewId();
-
-// Selectors are displayed left to right in the order listed here.
-$optionSelectorsHtml = $searchResults->emitSelectorForSite();
-$optionSelectorsHtml .= $searchResults->emitSelectorForView();
-$optionSelectorsHtml .= $searchResults->emitSelectorForLayout($layoutsData);
-$optionSelectorsHtml .= $searchResults->emitSelectorForSort();
-$optionSelectorsHtml .= $searchResults->emitSelectorForLimit();
-$optionSelectorsHtml .= $searchResults->emitSelectorForFilter();
-
-echo head(array('title' => $resultsMessage));
-echo "<div id='{$searchResults->getSearchResultsContainerName()}'>";
-
-$paginationLinks = pagination_links();
-echo "<div id='search-results-title'><span>$resultsMessage</span>$paginationLinks</div>";
-
-echo $searchResults->emitSearchFilters($optionSelectorsHtml, $totalResults > 0);
 ?>
 
+<div class="search-results-buttons">
+    <?php
+    echo $searchResults->emitModifySearchButton();
+    ?>
+</div>
+
+<?php echo $searchResults->emitSearchFilters($layoutButtonHtml, $totalResults ? pagination_links() : ''); ?>
+
 <?php if ($totalResults): ?>
-    <?php if ($useElasticsearch): ?>
-        <?php
-        $query = $searchResults->getQuery();
-        $facets = $searchResults->getFacets();
-        echo $this->partial('/elasticsearch-facets.php', array(
-                'query' => $query,
-                'aggregations' => $facets,
-                'totalResults' => $totalResults
-            )
-        );
-        ?>
-        <section id="elasticsearch-results">
-    <?php endif; ?>
-    <table id="search-table-view">
-        <thead>
-        <tr>
+    <div id="search-table-view">
+ 		
+        <div class="table-sort-options">
+			<span>Sort by: </span>
             <?php echo $this->partial('/table-view-header.php', array('searchResults' => $searchResults)); ?>
-        </tr>
-        </thead>
-        <tbody>
+        </div>
+        
+        <div class="table-rows-container">
         <?php
         foreach ($results as $result)
         {
-            if (!$useElasticsearch)
-            {
-                set_current_record('Item', $result);
-            }
-            echo $this->partial(
-                '/table-view-row.php',
-                array(
-                    'item' => $result,
-                    'searchResults' => $searchResults,
-                    'detailElements' => $detailElements,
-                    'identifierAliasName' => $identifierAliasName,
-                    'allowSortByRelevance' => $allowSortByRelevance,
-                    'checkboxFieldData' => $checkboxFieldData,
-                    'userCanEdit' => $userCanEdit)
-            );
+            set_current_record('Item', $result);
+            echo $this->partial('/table-view-row.php', array('item'=> $result, 'searchResults' => $searchResults, 'column1' => $column1, 'column2' => $column2));
         }
         ?>
-        </tbody>
-    </table>
-
-    <?php
-        $queryString = empty($_SERVER['QUERY_STRING']) ? '' : '?' . $_SERVER['QUERY_STRING'];
-        $findUrl = url('/find') . $queryString;
-        $args = array('total' => $totalResults, 'url' => $findUrl, 'error' => $reportCreationError);
-        echo get_specific_plugin_hook_output('AvantReport', 'public_search_results', $args);
-    ?>
-
-    <?php if ($useElasticsearch): ?>
-        </section>
-    <?php endif; ?>
-    <?php
-        echo "<div id='search-pagination-bottom'>$paginationLinks</div>";
-        echo '</div>';
-    ?>
-<?php else: ?>
-    <div id="no-results">
-        <div id="no-results-error">
-            <?php
-            $error = $searchResults->getError();
-            if (!empty($error))
-            {
-                echo '<hr>';
-                echo '<div>' . __("Your keyword(s) caused a search error. This can happen if they contain unrecognized punctuation.") . '</div>';
-                echo '<div id="no-results-error-sql">';
-                echo $error;
-                echo '</div>';
-            }
-            ?>
         </div>
     </div>
+    <?php echo $this->partial('/table-view-script.php', array('layoutId' => $layoutId, 'layoutIdFirst' => $layoutIdFirst, 'layoutIdLast' => $layoutIdLast)); ?>
+    <?php echo pagination_links(); ?>
+    <?php echo '</div>'; ?>
+<?php else: ?>
+    <div id="no-results">
+        <p>
+            <?php
+            $error = $searchResults->getError();
+            $message = empty($error) ? __('Your search returned no results.') : $error;
+            echo $message;
+            ?>
+        </p>
+    </div>
 <?php endif; ?>
-<?php
-echo $this->partial('/results-view-script.php',
-    array(
-        'filterId' => $filterId,
-        'indexId' => 0,
-        'layoutId' => $layoutId,
-        'limitId' => $limitId,
-        'siteId' => $siteId,
-        'sortId' => $sortId,
-        'viewId' => $viewId)
-);
-echo foot();
-?>
+<?php echo foot(); ?>

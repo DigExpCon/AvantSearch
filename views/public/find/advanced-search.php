@@ -1,299 +1,258 @@
 <?php
-function getAdvancedSearchArgs($useElasticsearch)
-{
-    if (isset($_GET['advanced']))
-    {
-        $searchArgs = $_GET['advanced'];
-
-        if ($useElasticsearch)
-        {
-            // Determine if the search args use an element Id instead of an element name. This will be the case for
-            // Advanced Search links that are for implicit links e.g. the links on an Item page to other items that
-            // have the same Subject, Creator, Type etc. Note that in this case it's always safe to use ItemMetadata to
-            // get the element name since an Item page is always running on the Omeka installation that uses those Ids.
-            foreach ($searchArgs as $index => $args)
-            {
-                if (!array_key_exists('element_id', $args))
-                    continue;
-                $elementId = $args['element_id'];
-                if (ctype_digit($elementId))
-                {
-                    // The value is an Omeka element Id. Attempt to get the element's name.
-                    $elementName = ItemMetadata::getElementNameFromId($elementId);
-                    $searchArgs[$index]['element_id'] = $elementName;
-                }
-            }
-        }
-    }
-    else
-    {
-        $searchArgs = array(array('field' => '', 'type' => '', 'value' => ''));
-    }
-    return $searchArgs;
-}
-
 $advancedFormAttributes['id'] = 'search-filter-form';
 $advancedFormAttributes['action'] = url('find');
 $advancedFormAttributes['method'] = 'GET';
 $advancedSubmitButtonText = __('Search');
 
-$useElasticsearch = AvantSearch::useElasticsearch();
-
-$queryString = '';
-if (AvantSearch::allowToggleBetweenLocalAndSharedSearching())
-{
-    // Get the query string and break it into individual args.
-    $queryString = empty($_SERVER['QUERY_STRING']) ? '' : '?' . $_SERVER['QUERY_STRING'];
-    $args = explode('&', $queryString);
-
-    foreach ($args as $index => $arg)
-    {
-        // Remove the 'site' are if there is one since the code below will add it back toggled.
-        // Remove any facets args (they start with 'root_' or 'leaf_') since facets are not all the same
-        // between shared and local sites. If we don't remove them, and one of the facets does not exist in
-        // the toggled-to site, the user will get no results from the search.
-        $prefix = substr($arg, 0, 4);
-        if ($prefix == 'site' || $prefix == 'root' || $prefix == 'leaf')
-        {
-            unset($args[$index]);
-        }
-    }
-
-    // Reconstruct the query string from the remaining args.
-    $newQueryString = implode('&', $args);
-
-    // Form the Advanced Search page URL.
-    $findUrl = url('/find') . $newQueryString;
-    $advancedSearchUrl = url('/find/advanced') . $newQueryString;
-
-    $thisSite = strtolower(AvantSearch::SITE_THIS);
-    $sharedSite = strtolower(AvantSearch::SITE_SHARED);
-    $siteBeingSearched = __(' of ');
-    $siteToggle = __('Switch to searching ');
-
-    $siteArg = strpos($newQueryString, '?') === false ? '?' : '&';
-    $siteArg .= 'site=';
-    $advancedSearchUrl .= $siteArg;
-
-    $searchingSharedSite = AvantSearch::getSelectedSiteId() == 1;
-
-    if ($searchingSharedSite)
-    {
-        $siteBeingSearched .= $sharedSite;
-        $siteToggle .= __('only ') . "<a href='{$advancedSearchUrl}0'>$thisSite</a>";
-    }
-    else
-    {
-        $siteBeingSearched .= $thisSite;
-        $siteToggle .= "<a href='{$advancedSearchUrl}1'>$sharedSite</a>";
-    }
-}
-else
-{
-    $siteBeingSearched = '';
-    $siteToggle = '';
-}
-
-$helpText = '';
-$facets = '';
-if ($useElasticsearch)
-{
-    $statsUrl = url('/avant/dashboard') . $queryString;
-    $siteStats = "<a href='$statsUrl'>View site statistics</a>";
-    $helpTextFileName = AVANTELASTICSEARCH_PLUGIN_DIR . DIRECTORY_SEPARATOR . 'elasticsearch-help.html';
-    $helpText = file_get_contents($helpTextFileName);
-}
-else
-{
-    $helpTextFileName = AVANTSEARCH_PLUGIN_DIR . DIRECTORY_SEPARATOR . 'sql-search-help.html';
-    $helpText = file_get_contents($helpTextFileName);
-}
-
 // Instantiate search results objects needed to get option values.
 $searchResults = new SearchResultsView();
 $searchResultsTable = new SearchResultsTableView();
+$searchResultsIndex = new SearchResultsIndexView();
+$searchResultsTree = new SearchResultsTreeView();
 
+$selectedLayoutId = $searchResultsTable->getLayoutId();
+$resultsPerPage = $searchResultsTable->getResultsLimit();
 $keywords = $searchResults->getKeywords();
 $searchTitlesOnly = $searchResultsTable->getSearchTitles();
+$searchFilesOnly = $searchResultsTable->getSearchFiles();
 $condition = $searchResults->getKeywordsCondition();
-$tags = $searchResults->getTags();
-$yearStart = $searchResults->getYearStart();
-$yearEnd = $searchResults->getYearEnd();
 
 $showTitlesOption = get_option(SearchConfig::OPTION_TITLES_ONLY) == true;
+$showDateRangeOption = SearchConfig::getOptionSupportedDateRange();
 
 $pageTitle = __('Advanced Search');
 
+queue_js_file('js.cookie');
 echo head(array('title' => $pageTitle, 'bodyclass' => 'avantsearch-advanced'));
-echo "<div><h1>$pageTitle $siteBeingSearched</h1></div>";
+echo "<h1>$pageTitle</h1>";
+echo "<div id='avantsearch-container'>";
 ?>
-<div id='avantsearch-container'>
-    <!-- Left Panel -->
+
+<form <?php echo tag_attributes($advancedFormAttributes); ?>>
+
+	<!-- Left Panel -->
 	<div id="avantsearch-primary">
-        <div id="avantsearch-site-toggle">
-            <?php echo $siteToggle; ?>
-        </div>
-        <form <?php echo tag_attributes($advancedFormAttributes); ?>>
-            <div id="search-button" class="panel">
-                <input type="submit" class="submit button" value="<?php echo $advancedSubmitButtonText; ?>">
-                <!-- Emit the hidden <input> tags needed to put query string argument values into the form. -->
-                <?php echo AvantSearch::getHiddenInputsForAdvancedSearch() ?>
-            </div>
-            <div class="search-form-section">
-                <div class="search-field">
-                    <div class="avantsearch-label-column">
-                        <?php echo $this->formLabel('keywords', __('Keywords')); ?><br>
-                    </div>
-                    <div class="avantsearch-option-column">
-                        <?php echo $this->formText('keywords', $keywords, array('id' => 'keywords')); ?>
-                    </div>
-                </div>
-                <?php if (!$useElasticsearch): ?>
-                    <?php if ($showTitlesOption): ?>
-                        <div class="search-field">
-                            <div class="avantsearch-label-column">
-                                <?php echo $this->formLabel('title-only', __('Search in')); ?><br>
-                            </div>
-                            <div class="avantsearch-option-column">
-                                <div class="search-radio-buttons">
-                                    <?php echo $this->formRadio('titles', $searchTitlesOnly, null, $searchResults->getKeywordSearchTitlesOptions()); ?>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endif; ?>
-                    <div class="search-field">
-                        <div class="avantsearch-label-column">
-                            <?php echo $this->formLabel('keyword-conditions', __('Condition')); ?><br>
-                        </div>
-                        <div class="avantsearch-option-column">
-                            <div class="search-radio-buttons">
-                                <?php echo $this->formRadio('condition', $condition, null, $searchResults->getKeywordsConditionOptions()); ?>
-                            </div>
-                        </div>
-                    </div>
-                <?php endif; ?>
-            </div>
-
-            <div  id="search-narrow-by-fields" class="search-form-section">
-                <div>
-                    <div class="avantsearch-label-column">
-                        <label><?php echo __('Fields'); ?></label>
-                    </div>
-                    <div class="avantsearch-option-column inputs">
-                        <?php
-                        $search = getAdvancedSearchArgs($useElasticsearch);
-                        foreach ($search as $i => $rows): ?>
-                            <div class="search-entry" id="search-row-<?php echo $i; ?>" aria-label="<?php echo __('Row %s', $i+1); ?>">
-                                <?php
-                                if (!$useElasticsearch)
-                                {
-                                    $value = isset($rows['joiner']) ? $rows['joiner'] : null;
-                                    echo $this->formSelect(
-                                        "advanced[$i][joiner]",
-                                        $value,
-                                        array(
-                                            'title' => __("Search Joiner"),
-                                            'id' => null,
-                                            'aria-labelledby' => 'search-narrow-by-fields-label search-row-' . $i . ' search-narrow-by-fields-joiner',
-                                            'class' => 'advanced-search-joiner'
-                                        ),
-                                        array(
-                                            'and' => __('AND'),
-                                            'or' => __('OR'),
-                                        )
-                                    );
-                                }
-                                $value = isset($rows['element_id']) ? $rows['element_id'] : null;
-                                echo $this->formSelect(
-                                    "advanced[$i][element_id]",
-                                    $value,
-                                    array(
-                                        'title' => __("Search Field"),
-                                        'id' => null,
-                                        'aria-labelledby' => 'search-narrow-by-fields-label search-row-' . $i . ' search-narrow-by-fields-property',
-                                        'class' => 'advanced-search-element'
-                                    ),
-                                    $searchResults->getAdvancedSearchFields()
-                                );
-                                echo $this->formSelect(
-                                    "advanced[$i][type]",
-                                    empty($rows['type']) ? 'contains' : $rows['type'],
-                                    array(
-                                        'title' => __("Search Type"),
-                                        'id' => null,
-                                        'aria-labelledby' => 'search-narrow-by-fields-label search-row-' . $i . ' search-narrow-by-fields-type',
-                                        'class' => 'advanced-search-type'
-                                    ),
-                                    $searchResults->getAdvancedSearchConditions($useElasticsearch)
-                                );
-
-                                $value = isset($rows['terms']) ? $rows['terms'] : null;
-                                echo $this->formText(
-                                    "advanced[$i][terms]",
-                                    $value,
-                                    array(
-                                        'size' => '20',
-                                        'title' => __("Search Terms"),
-                                        'id' => null,
-                                        'aria-labelledby' => 'search-narrow-by-fields-label search-row-' . $i . ' search-narrow-by-fields-terms',
-                                        'class' => 'advanced-search-terms',
-                                        'autofocus' => ''
-                                    )
-                                );
-                                ?>
-                                <button type="button" class="remove_search"aria-labelledby="search-narrow-by-fields-label search-row-<?php echo $i; ?> search-narrow-by-fields-remove-field" disabled="disabled"
-                                        style="display: none;"><?php echo __('Remove field'); ?></button>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-                <button type="button" class="add_search"><?php echo __('Add field'); ?></button>
-            </div>
-
-            <?php if (!$useElasticsearch): ?>
-            <div class="search-form-section">
+		<div class="search-form-section">
+			<div class="search-field">
+				<div class="avantsearch-label-column">
+					<?php echo $this->formLabel('keywords', __('Keywords')); ?><br>
+				</div>
+				<div class="avantsearch-option-column inputs">
+					<?php echo $this->formText('keywords', $keywords, array('id' => 'keywords')); ?>
+				</div>
+			</div>
+            <?php if ($showTitlesOption): ?>
+            <div class="search-field">
                 <div class="avantsearch-label-column">
-                    <?php echo $this->formLabel('year-range', __('Years')); ?>
+                    <?php echo $this->formLabel('title-only', __('Search in')); ?><br>
                 </div>
-                <div class="avantsearch-year-range">
-                    <label><?php echo __('Start');?></label>
-                    <?php echo $this->formText('year_start', $yearStart, array('id' => 'year-start', 'title' => 'Four digit start year')); ?>
-                    <label><?php echo __('End'); ?></label>
-                    <?php echo $this->formText('year_end', $yearEnd, array('id' => 'year-end', 'title' => 'Four digit end year')); ?>
+                <div class="avantsearch-option-column">
+                	<div class="search-radio-buttons">
+						<?php echo $this->formRadio('titles', $searchTitlesOnly, null, $searchResults->getKeywordSearchTitlesOptions()); ?>
+					</div>
                 </div>
             </div>
             <?php endif; ?>
+            <div class="search-field">
+				<div class="avantsearch-label-column">
+					<?php echo $this->formLabel('keyword-conditions', __('Condition')); ?><br>
+				</div>
+				<div class="avantsearch-option-column">
+					<div class="search-radio-buttons">
+						<?php echo $this->formRadio('condition', $condition, null, $searchResults->getKeywordsConditionOptions()); ?>
+					</div>
+				</div>
+			</div>
+		</div>
 
-            <?php if (!$useElasticsearch): ?>
-            <div class="search-form-section">
-                <div>
-                    <div class="avantsearch-label-column">
-                        <?php echo $this->formLabel('tag-search', __('Tags')); ?>
-                    </div>
-                    <div class="avantsearch-option-column inputs">
-                        <?php echo $this->formText('tags', $tags, array('size' => '40', 'id' => 'tags')); ?>
-                    </div>
+		<div  id="search-narrow-by-fields" class="search-form-section">
+			<div>
+				<div class="avantsearch-label-column">
+					<label><?php echo __('Fields'); ?></label>
+				</div>
+				<div class="avantsearch-option-column inputs">
+					<?php
+					// If the form has been submitted, retain the number of search fields used and rebuild the form
+					if (!empty($_GET['advanced']))
+						$search = $_GET['advanced'];
+					else
+						$search = array(array('field' => '', 'type' => '', 'value' => ''));
+
+					foreach ($search as $i => $rows): ?>
+						<div class="search-entry">
+							<?php
+							echo $this->formSelect(
+								"advanced[$i][joiner]",
+								@$rows['joiner'],
+								array(
+									'title' => __("Search Joiner"),
+									'id' => null,
+									'class' => 'advanced-search-joiner'
+								),
+								array(
+									'and' => __('AND'),
+									'or' => __('OR'),
+								)
+							);
+							echo $this->formSelect(
+								"advanced[$i][element_id]",
+								@$rows['element_id'],
+								array(
+									'title' => __("Search Field"),
+									'id' => null,
+									'class' => 'advanced-search-element'
+								),
+                                $searchResults->getAdvancedSearchFields()
+							);
+							echo $this->formSelect(
+								"advanced[$i][type]",
+								empty($rows['type']) ? 'contains' : $rows['type'],
+								array(
+									'title' => __("Search Type"),
+									'id' => null,
+									'class' => 'advanced-search-type'
+								),
+								array(
+									'contains' => __('Contains'),
+									'does not contain' => __('Does not contain'),
+									'does not match' => __('Does not match'),
+									'ends with' => __('Ends with'),
+									'is empty' => __('Is empty'),
+									'is exactly' => __('Is exactly'),
+									'is not empty' => __('Is not empty'),
+									'is not exactly' => __('Is not exactly'),
+									'matches' => __('Matches'),
+									'starts with' => __('Starts with'),
+								)
+							);
+							echo $this->formText(
+								"advanced[$i][terms]",
+								@$rows['terms'],
+								array(
+									'size' => '20',
+									'title' => __("Search Terms"),
+									'id' => null,
+									'class' => 'advanced-search-terms'
+								)
+							);
+							?>
+							<button type="button" class="remove_search" disabled="disabled"
+									style="display: none;"><?php echo __('Remove field'); ?></button>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			</div>
+            <button type="button" class="add_search"><?php echo __('Add field'); ?></button>
+        </div>
+
+        <div class="search-form-section">
+            <div>
+                <div class="avantsearch-label-column">
+                		<!-- changed label 'for' attribute; was 'tag-search' (BH 10-2024) -->
+                    <?php echo $this->formLabel('tags', __('Tags')); ?>
+                </div>
+                <div class="avantsearch-option-column inputs">
+                    <?php echo $this->formText('tags', @$_REQUEST['tags'], array('size' => '40', 'id' => 'tags')); ?>
                 </div>
             </div>
-            <?php endif; ?>
-            <div class="search-form-reset-button">
-                <?php echo '<a href="' . WEB_ROOT . '/find/advanced">Clear all search options</a>'; ?>
-            </div>
-        </form>
-    </div>
-	<div id="avantsearch-secondary">
-        <?php if ($useElasticsearch): ?>
-            <div id="avantsearch-site-stats">
-                <?php echo $siteStats; ?>
-            </div>
+        </div>
+
+        <?php if ($showDateRangeOption): ?>
+        <div class="search-form-section">
+			<div>
+				<div class="avantsearch-label-column">
+					<?php echo $this->formLabel('year-start', CommonConfig::getOptionTextForYearStart()); ?>
+				</div>
+				<div class="avantsearch-option-column inputs">
+					<?php echo $this->formText('year_start', @$_REQUEST['year_start'], array('size' => '40', 'id' => 'year-start', 'title' => 'Four digit start year'));	?>
+				</div>
+			</div>
+
+			<div>
+				<div class="avantsearch-label-column">
+					<?php echo $this->formLabel('year-end', CommonConfig::getOptionTextForYearEnd()); ?>
+				</div>
+				<div class="avantsearch-option-column inputs">
+					<?php echo $this->formText('year_end', @$_REQUEST['year_end'], array('size' => '40', 'id' => 'year-end', 'title' => 'Four digit end year'));	?>
+				</div>
+			</div>
+		</div>
         <?php endif; ?>
-        <div class="search-help"><?php echo $helpText ?></div>
+	</div>
+
+	<!-- Right Panel -->
+	<div id="avantsearch-secondary">
+		<div id="search-button" class="panel">
+			<input type="submit" class="submit button" value="<?php echo $advancedSubmitButtonText; ?>">
+		</div>
+
+        <?php echo $this->formLabel('view-label', __('Show search results in:')); ?>
+        <div class="search-radio-buttons">
+            <?php echo $this->formRadio('view', $searchResults->getViewId(), null, $searchResults->getViewOptions()); ?>
+        </div>
+
+        <div id="table-view-options" class="search-view-options">
+            <div class="table-view-layout-option search-view-option">
+                <?php
+                echo $this->formLabel('layout', __('Table Layout'));
+                $layoutSelectOptions = $searchResultsTable->getLayoutSelectOptions();
+                echo $this->formSelect('layout', $selectedLayoutId, array(), $layoutSelectOptions);
+                ?>
+            </div>
+        </div>
+
+        <div id="index-view-options" class="search-view-options">
+        	<div class="index-view-field-option search-view-option">
+				<?php
+				echo $this->formLabel('index-label', __('Index Field'));
+				echo $this->formSelect('index', @$_REQUEST['index'], array(), $searchResultsIndex->getIndexFieldOptions());
+				?>
+            </div>
+        </div>
+
+        <div id="tree-view-options" class="search-view-options">
+            <div class="tree-view-field-option search-view-option">
+            <?php
+            echo $this->formLabel('tree-label', __('Tree Field'));
+            echo $this->formSelect('tree', @$_REQUEST['tree'], array(), $searchResultsTree->getTreeFieldOptions());
+            ?>
+            </div>
+        </div>
+
+        <div id="results-limit-options" class="search-view-options">
+            <div class="table-view-limit-option search-view-option">
+                <?php
+                echo $this->formLabel('limit', __('Results Per Page'));
+                echo $this->formSelect('limit', @$_REQUEST['limit'], array(), $searchResultsTable->getLimitOptions());
+                ?>
+            </div>
+        </div>
+
+        <div class="search-images-only-option">
+            <?php echo $this->formLabel('view-label', __('Search:')); ?>
+            <div class="search-radio-buttons">
+                <?php echo $this->formRadio('files', $searchFilesOnly, null, $searchResults->getFilesOnlyOptions()); ?>
+            </div>
+        </div>
+
+        <div class="search-form-reset-button">
+            <?php echo '<a href="' . WEB_ROOT . '/find/advanced">Reset all search options</a>'; ?>
+        </div>
     </div>
+</form>
 </div>
 
 <?php echo js_tag('items-search'); ?>
 
 <script type="text/javascript">
+    var tableViewOptions = jQuery('#table-view-options');
+    var indexViewOptions = jQuery('#index-view-options');
+    var treeViewOptions = jQuery('#tree-view-options');
+    var resultsLimitOptions = jQuery('#results-limit-options');
+
+    var DEFAULT_LAYOUT = '<?php echo SearchResultsTableView::DEFAULT_LAYOUT; ?>';
+    var RELATIONSHIPS_LAYOUT = '<?php echo SearchResultsTableView::RELATIONSHIPS_LAYOUT; ?>';
+
     function disableDefaultRadioButton(name, defaultValue)
     {
         var checkedButton = jQuery("input[name='" + name + "']:checked");
@@ -324,36 +283,127 @@ echo "<div><h1>$pageTitle $siteBeingSearched</h1></div>";
         }
     }
 
+    function disableHiddenSelection(selector)
+    {
+        var select = jQuery(selector);
+        var selectedOption = select.find(":selected");
+        var hidden = select.is(':hidden');
+        if (hidden)
+        {
+            select.prop("disabled", true);
+        }
+    }
+
+    function setView(viewId)
+    {
+        viewId = parseInt(viewId, 10);
+
+        // Hide all options.
+        tableViewOptions.hide();
+        indexViewOptions.hide();
+        treeViewOptions.hide();
+        resultsLimitOptions.hide();
+
+        var selectedViewOptions = null;
+
+        // Show the options for the selected view.
+        if (viewId === <?php echo SearchResultsViewFactory::TABLE_VIEW_ID; ?>)
+            selectedViewOptions = tableViewOptions;
+        else if (viewId === <?php echo SearchResultsViewFactory::INDEX_VIEW_ID; ?>)
+            selectedViewOptions = indexViewOptions;
+        else if (viewId === <?php echo SearchResultsViewFactory::TREE_VIEW_ID; ?>)
+            selectedViewOptions = treeViewOptions;
+
+        if (selectedViewOptions)
+        {
+            selectedViewOptions.slideDown('slow');
+        }
+        if (viewId === <?php echo SearchResultsViewFactory::TABLE_VIEW_ID; ?> ||
+            viewId === <?php echo SearchResultsViewFactory::IMAGE_VIEW_ID; ?>)
+        {
+            resultsLimitOptions.slideDown('slow');
+        }
+    }
+
+    function updateRelationshipsOption(changed)
+    {
+        var showRelationships = jQuery("#relationships").prop('checked');
+        var layoutSelector = jQuery('#layout');
+        var selectedLayoutId = layoutSelector.val();
+
+        if (changed)
+        {
+            if (showRelationships)
+            {
+                // The user checked the Show Relationships box.
+                // Automatically change the selection to show the Relationships layout option.
+                selectedLayoutId = RELATIONSHIPS_LAYOUT;
+            }
+            else
+            {
+                // The user unchecked the Show Relationships box.
+                // Make sure that the Relationships layout option is not selected.
+                if (selectedLayoutId === RELATIONSHIPS_LAYOUT)
+                    selectedLayoutId = DEFAULT_LAYOUT;
+            }
+        }
+
+        // Show the selected layout option and enable/disable the Relationships option.
+        layoutSelector.val(selectedLayoutId);
+        jQuery("#layout option[value='" + RELATIONSHIPS_LAYOUT + "']").attr("disabled", !showRelationships);
+    }
+
     jQuery(document).ready(function () {
         Omeka.Search.activateSearchButtons();
 
+        // Show the options for the selected view.
+        var viewSelection = jQuery("[name='view']:checked").val();
+        setView(viewSelection);
+
+        var userChangedOption = false;
+        updateRelationshipsOption(userChangedOption);
+
+        limitSelector = jQuery('#limit');
+        limitSelector.val(<?php echo $resultsPerPage; ?>);
+
+        jQuery("[name='view']").change(function (e)
+        {
+            // The user changed the results view.
+            var viewSelection = jQuery(this).val();
+            setView(viewSelection);
+        });
+
+        jQuery("[name='relationships']").change(function (e)
+        {
+            var userChangedOption = true;
+            updateRelationshipsOption(userChangedOption);
+        });
+
+        limitSelector.change(function (e)
+        {
+            // The user changed results per page. Save the selection in a cookie.
+            var resultsSelection = jQuery(limitSelector, 'option:selected').val();
+            jQuery('#simple-results').text(resultsSelection);
+            Cookies.set('SEARCH-LIMIT', resultsSelection, {expires: 7});
+        });
+
         jQuery('#search-filter-form').submit(function()
         {
-            // Determine if the user added a search field, but didn't select an Omeka element name.
-            // For each such field, remove all of its HTML elements (joiner, Omeka element, condition, and value)
-            // so that none will get submitted when the Search button gets clicked.
+            // Disable fields that should not get emitted as part of the query string because:
+            // * The user provided no value, or
+            // * The default value is selected as does not need to be in the query string
 
-            // Loop over each <div> that contains the SELECT and INPUT tags for a field.
-            let searchEntries = jQuery(".search-entry");
-            for (let i = 0; i < searchEntries.length; i++)
+            var field0Id = jQuery("select[name='advanced[0][element_id]']");
+            var field0Condition = jQuery("select[name='advanced[0][type]']");
+            if (field0Id.val() === '' || field0Condition.val() === '')
             {
-                // Walk the elements to find the SELECT for the Omeka element name. It has class 'advanced-search-element'.
-                let searchEntry = searchEntries[i];
-                let children = searchEntry.childNodes;
-                for (let child in children)
-                {
-                    if (children.hasOwnProperty(child))
-                    {
-                        let entryElement = children[child];
-                        if (entryElement.className === 'advanced-search-element' && entryElement.value === '')
-                        {
-                            // The SELECT has no value. Remove the containing <div> for the field.
-                            // This has the effect of undoing the user having added a new field.
-                            searchEntry.remove();
-                            break;
-                        }
-                    }
-                }
+                var field0Joiner = jQuery("select[name='advanced[0][joiner]']");
+                var field0Value = jQuery("input[name='advanced[0][terms]']");
+
+                field0Joiner.prop("disabled", true);
+                field0Id.prop("disabled", true);
+                field0Condition.prop("disabled", true);
+                field0Value.prop("disabled", true);
             }
 
             disableEmptyField('#keywords');
@@ -361,8 +411,23 @@ echo "<div><h1>$pageTitle $siteBeingSearched</h1></div>";
             disableEmptyField('#year-start');
             disableEmptyField('#year-end');
 
+            disableDefaultRadioButton('files', '<?php echo SearchResultsView::DEFAULT_SEARCH_FILES; ?>');
             disableDefaultRadioButton('titles', '<?php echo SearchResultsView::DEFAULT_SEARCH_TITLES; ?>');
             disableDefaultRadioButton('condition', '<?php echo SearchResultsView::DEFAULT_KEYWORDS_CONDITION; ?>');
+            disableDefaultRadioButton('view', '<?php echo SearchResultsView::DEFAULT_VIEW; ?>');
+
+            disableHiddenSelection('#layout');
+            disableHiddenSelection('#index');
+            disableHiddenSelection('#tree');
+
+            disableHiddenInput('#limit');
+
+            if (navigator.cookieEnabled)
+            {
+                // When cookies are disabled, pass the limit option on the query string.
+                var limitSelector = jQuery("#limit");
+                limitSelector.prop("disabled", true);
+            }
         });
     });
 </script>

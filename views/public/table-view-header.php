@@ -6,20 +6,17 @@ $layoutData = $searchResults->getLayoutsData();
 
 $headerColumns = array();
 
-foreach ($columnsData as $column)
+if ($searchResults->hasLayoutL1())
 {
-    $columnName = $column['name'];
+    // Set the Image column which only appears in the L1 Detail layout.
+    $headerColumns['<image>'] = array('label' => 'Image', 'classes' => 'L1', 'sortable' => false);
+}
 
-    if ($columnName == 'Identifier' && $searchResults->sharedSearchingEnabled())
-    {
-        continue;
-    }
-
+foreach ($columnsData as $elementId => $column)
+{
     $classes = SearchResultsTableView::createLayoutClasses($column);
-    $sortable = true;
 
-    $sortColumn = isset($_GET['sort']) ? $_GET['sort'] : '';
-    if ($columnName == $sortColumn)
+    if ($column['name'] == 'Title')
     {
         $classes = 'L1 ' . $classes;
     }
@@ -31,9 +28,9 @@ foreach ($columnsData as $column)
     }
 
     // Form the special class name e.g. 'search-th-title' that is unique to this header column.
-    $classes .= ' ' . SearchResultsView::createColumnClass($columnName, 'th');
+    $classes .= ' ' . SearchResultsView::createColumnClass($column['name'], 'th');
 
-    $headerColumns[] = array('name' => $columnName, 'label' => $column['alias'], 'classes' => $classes, 'sortable' => $sortable);
+    $headerColumns[$elementId] = array('label' => $column['alias'], 'classes' => $classes, 'sortable' => true);
 }
 
 echo $searchResults->emitHeaderRow($headerColumns);

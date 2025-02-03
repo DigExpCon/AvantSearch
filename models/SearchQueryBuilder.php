@@ -29,26 +29,29 @@ class SearchQueryBuilder
         $sortOrder = $searchResults->getSortOrder() == 'a' ? 'ASC' : ' DESC';
         $isKeywordQuery = !empty($keywords);
         $titleOnly = $searchResults->getSearchTitles();
-        $isIndexQuery = $viewId == SearchResultsViewFactory::INDEX_VIEW_ID;
+        $isIndexQuery = $viewId == SearchResultsViewFactory::INDEX_VIEW_ID || $viewId == SearchResultsViewFactory::TREE_VIEW_ID;
         $isFilesOnlyQuery = $searchResults->getSearchFiles();
 
         if ($isIndexQuery)
         {
-            $primaryField =  $searchResults->getIndexFieldElementId();
+            if ($viewId == SearchResultsViewFactory::INDEX_VIEW_ID)
+                $primaryField =  $searchResults->getIndexFieldElementId();
+            else
+                $primaryField =  $searchResults->getTreeFieldElementId();
         }
         else
         {
-            $primaryField = $searchResults->getSortFieldElementId();
+            $primaryField = $searchResults->getSortField();
         }
 
         // Construct the query.
         $this->buildQuery($primaryField, $isKeywordQuery, $isFilesOnlyQuery);
-        $this->buildWhereDateRange();
 
         if ($isKeywordQuery)
             $this->buildKeywordWhere($keywords, $condition, $titleOnly);
 
         $this->buildSortOrder($primaryField, $sortOrder, $isIndexQuery);
+        $this->buildWhereDateRange();
 
         // Circumvent a bug in Table_Item::applySearchFilters which groups by items.id twice.
         $this->select->reset(Zend_Db_Select::GROUP);
@@ -62,9 +65,9 @@ class SearchQueryBuilder
             // Prevent index queries from returning null records;
             $this->select->where('_primary_column.text IS NOT NULL');
 
-            // Group records that got returned more than once and get the group count. Otherwise, for example, when
-            // indexing by subject, the query would return the same item three times if the item had three subjects.
-            $this->select->columns('COUNT(DISTINCT items.id) AS count');
+            // Group records that got returned more than once and get the group count. For example, when
+            // indexing by subject, the query returns the same item three times if the item has three subjects.
+            $this->select->columns('COUNT(*) AS count');
             $this->select->columns('_primary_column.text AS text');
             $this->select->group('text');
         }
@@ -81,9 +84,7 @@ class SearchQueryBuilder
             $this->select->where("items.id = 0");
         }
 
-        // These are used only for interactive debugging so that you can see the generated SQL.
-        $where = implode($this->select->getPart(Zend_Db_Select::WHERE));
-        $sql = (string)$this->select;
+        $sql = (string)$this->select; // For debugging only
     }
 
     protected function searchHasFilters()
@@ -137,7 +138,7 @@ class SearchQueryBuilder
         }
 
         // Join the element-text table to bring in the value of the primary field. For Table View, the
-        // primary field is the sort field. For Index View, it's the field being viewed.
+        // primary field is the sort field. For Index View and Tree View, it's the field being viewed.
         $this->select->joinLeft(array('_primary_column' => $elementTextTable),
             "_primary_column.record_id = items.id AND _primary_column.record_type = 'item' AND _primary_column.element_id = $primaryField");
 
@@ -162,9 +163,7 @@ class SearchQueryBuilder
         {
             case SearchResultsView::KEYWORD_CONDITION_CONTAINS :
                 $query = "%$query%";
-                $where = "
-                search_texts.record_type = 'Item' AND
-                search_texts.$searchColumn LIKE ?";
+                $where = "`search_texts`.`$searchColumn` LIKE ?";
                 break;
 
             case SearchResultsView::KEYWORD_CONDITION_BOOLEAN :
@@ -197,10 +196,8 @@ class SearchQueryBuilder
                         $query .= "$word";
                     }
                 }
-
-                $where = "
-                search_texts.record_type = 'Item' AND
-                MATCH (search_texts.$searchColumn) AGAINST (? IN BOOLEAN MODE)";
+                $where = "`search_texts`.`record_type` = 'Item' AND ";
+                $where .= "MATCH (`search_texts`.`$searchColumn`) AGAINST " . '(? IN BOOLEAN MODE)';
                 break;
         }
 
@@ -226,6 +223,7 @@ class SearchQueryBuilder
         $titleFieldElementId = ItemMetadata::getTitleElementId();
 
         $sortByAddress = $sortField == $addressFieldElementId;
+        $sortAsHierarchy = SearchConfig::isHierarchyElementThatDisplaysAs($sortField, 'leaf');
 
         $sortByTitle = $sortField == $titleFieldElementId;
 
@@ -233,7 +231,7 @@ class SearchQueryBuilder
 
         if ($isIndexQuery && !$sortByTitle)
         {
-            // When Index View results are not ordered by title, the primary column is
+            // When Index View and Tree View results are not ordered by title, the primary column is
             // the primary element's column. When sorting by title, the title code below will sort
             // title without any leading quotes.
             $primaryColumnName = 'text';
@@ -257,6 +255,11 @@ class SearchQueryBuilder
             // which refers to the match on the second group.
             $primaryColumnName .= '_exp';
             $this->select->columns($this->columnValueForStreetNameSort("_primary_column.text", $primaryColumnName));
+        }
+        elseif ($sortAsHierarchy)
+        {
+            $primaryColumnName .= '_exp';
+            $this->select->columns($this->columnValueForHierarchySort("_primary_column.text", $primaryColumnName));
         }
         else
         {
@@ -295,14 +298,16 @@ class SearchQueryBuilder
 
     protected function buildWhereDateRange()
     {
-        $dateElement = $this->db->getTable('Element')->findByElementSetNameAndElementName('Dublin Core', 'Date');
+        $yearStartElementName = CommonConfig::getOptionTextForYearStart();
+        $yearEndElementName = CommonConfig::getOptionTextForYearEnd();
 
         if (!empty($_GET['year_start']))
         {
             $yearStart = intval(trim($_GET['year_start']));
 
+            $element = $this->db->getTable('Element')->findByElementSetNameAndElementName('Item Type Metadata', $yearStartElementName);
             $this->select->joinLeft(array('_year_start' => $this->db->ElementText),
-                "_year_start.record_id = items.id AND _year_start.record_type = 'Item' AND _year_start.element_id = $dateElement->id", array());
+                "_year_start.record_id = items.id AND _year_start.record_type = 'Item' AND _year_start.element_id = $element->id", array());
 
             $this->select->where("_year_start.text >= '$yearStart'");
         }
@@ -311,11 +316,17 @@ class SearchQueryBuilder
         {
             $yearEnd = intval(trim($_GET['year_end']));
 
+            $element = $this->db->getTable('Element')->findByElementSetNameAndElementName('Item Type Metadata', $yearEndElementName);
             $this->select->joinLeft(array('_year_end' => $this->db->ElementText),
-                "_year_end.record_id = items.id AND _year_end.record_type = 'Item' AND _year_end.element_id = $dateElement->id", array());
+                "_year_end.record_id = items.id AND _year_end.record_type = 'Item' AND _year_end.element_id = $element->id", array());
 
             $this->select->where("_year_end.text <= '$yearEnd'");
         }
+    }
+
+    protected function columnValueForHierarchySort($columnName, $alias)
+    {
+        return "TRIM(SUBSTRING_INDEX($columnName, ',', -1)) AS $alias";
     }
 
     protected function columnValueForStreetNameSort($columnName, $alias)
